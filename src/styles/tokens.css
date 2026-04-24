@@ -1,0 +1,42 @@
+:root {
+  /* palette — ink on warm paper */
+  --paper: #f4efe6;
+  --paper-shade: #ecdfcb;
+  --paper-deep: #e6d9c0;
+  --ink: #1c1814;
+  --ink-soft: #4a3f34;
+  --ink-faint: #8a7a66;
+  --hairline: rgba(28, 24, 20, 0.18);
+  --hairline-soft: rgba(28, 24, 20, 0.08);
+  --accent: #b8531a;
+  --accent-deep: #8e3d10;
+  --accent-wash: rgba(184, 83, 26, 0.08);
+
+  /* type */
+  --serif: 'Fraunces', 'Source Serif 4', ui-serif, Georgia, serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --fs-display: clamp(3rem, 7vw, 5.25rem);
+  --fs-title: clamp(1.5rem, 2.2vw, 2rem);
+  --fs-body: 1rem;
+  --fs-label: 0.75rem;
+  --fs-tiny: 0.6875rem;
+
+  /* rhythm */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+
+  /* fretboard */
+  --fretboard-wood: #f0e6d3;
+  --fretboard-wood-edge: #d9c9ad;
+  --fret-wire: #8a7a66;
+  --fret-wire-highlight: #c9b794;
+  --string: #3a2f24;
+}

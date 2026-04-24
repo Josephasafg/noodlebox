@@ -1,0 +1,39 @@
+.fretboard {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.fretNumber {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  fill: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+
+.tuningLabel {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  fill: var(--ink-soft);
+  letter-spacing: 0.04em;
+}
+
+.noteLabel {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--ink);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.noteLabelRoot {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--paper);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}

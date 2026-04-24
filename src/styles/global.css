@@ -1,0 +1,68 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  height: 100%;
+}
+
+body {
+  font-family: var(--serif);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  background-image:
+    radial-gradient(at 20% 10%, rgba(184, 83, 26, 0.04) 0, transparent 55%),
+    radial-gradient(at 85% 90%, rgba(74, 63, 52, 0.05) 0, transparent 55%);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-feature-settings: 'ss01', 'cv11';
+}
+
+.serif {
+  font-family: var(--serif);
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: var(--fs-tiny);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
