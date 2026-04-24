@@ -1,234 +1,196 @@
+import { useMemo } from 'react'
 import type { FretNote } from '../theory/fretboard'
-import { FRET_COUNT, STANDARD_TUNING } from '../theory/fretboard'
-import { noteName, PITCH_NAMES_SHARP } from '../theory/notes'
+import { FRET_COUNT, scaleSequence } from '../theory/fretboard'
+import { noteName } from '../theory/notes'
+import { useSequencePlayhead } from '../hooks/useSequencePlayhead'
 import styles from './Fretboard.module.css'
 
-interface FretboardProps {
-  notes: FretNote[]
-  highlightRangeStart?: number
-  highlightRangeEnd?: number
-  showNoteNames?: boolean
-  scaleName?: string
-}
-
-const VIEW_W = 1360
-const VIEW_H = 280
-const PAD_L = 58
-const PAD_R = 30
-const PAD_T = 42
-const PAD_B = 38
+export const FB_VIEW_W = 1320
+export const FB_VIEW_H = 300
+export const FB_PAD_L = 60
+export const FB_PAD_R = 28
+export const FB_PAD_T = 48
+export const FB_PAD_B = 44
 
 const STRINGS = 6
-const STRING_SPACING = (VIEW_H - PAD_T - PAD_B) / (STRINGS - 1)
+const STRING_SPACING = (FB_VIEW_H - FB_PAD_T - FB_PAD_B) / (STRINGS - 1)
+const SCALE_LENGTH_MULT = 2.2
 
-const SCALE_LENGTH_MULTIPLIER = 2.2
-
-function fretX(fret: number): number {
-  const neckW = VIEW_W - PAD_L - PAD_R
-  const virtualScale = neckW * SCALE_LENGTH_MULTIPLIER
-  const nutX = PAD_L
-  if (fret === 0) return nutX
-  const distanceFromNut = virtualScale * (1 - Math.pow(2, -fret / 12))
-  const lastDistance = virtualScale * (1 - Math.pow(2, -FRET_COUNT / 12))
-  return nutX + (distanceFromNut / lastDistance) * neckW
+export function fretX(fret: number): number {
+  const neckW = FB_VIEW_W - FB_PAD_L - FB_PAD_R
+  const virtual = neckW * SCALE_LENGTH_MULT
+  if (fret === 0) return FB_PAD_L
+  const distance = virtual * (1 - Math.pow(2, -fret / 12))
+  const last = virtual * (1 - Math.pow(2, -FRET_COUNT / 12))
+  return FB_PAD_L + (distance / last) * neckW
 }
 
-function stringY(stringIdx: number): number {
-  // stringIdx 0 = low E (lowest pitch, bottom of diagram)
+export function stringY(stringIdx: number): number {
   const visualRow = STRINGS - 1 - stringIdx
-  return PAD_T + visualRow * STRING_SPACING
+  return FB_PAD_T + visualRow * STRING_SPACING
 }
 
-function fretCenterX(fret: number): number {
-  if (fret === 0) return PAD_L - 22
+export function fretCenterX(fret: number): number {
+  if (fret === 0) return FB_PAD_L - 24
   return (fretX(fret - 1) + fretX(fret)) / 2
 }
 
-const SINGLE_DOT_FRETS = [3, 5, 7, 9, 15, 17, 19, 21]
-const DOUBLE_DOT_FRETS = [12]
+const SINGLE_DOTS = [3, 5, 7, 9, 15, 17, 19, 21]
+const DOUBLE_DOTS = [12]
+const FRET_NUMBERS = [0, 3, 5, 7, 9, 12, 15, 17, 19, 21]
+
+interface FretboardProps {
+  notes: FretNote[]
+  highlightRangeStart: number
+  highlightRangeEnd: number
+  scaleName?: string
+  isPlaying?: boolean
+  playStartPerf?: number | null
+}
 
 export function Fretboard({
   notes,
   highlightRangeStart,
   highlightRangeEnd,
-  showNoteNames = true,
   scaleName,
+  isPlaying = false,
+  playStartPerf = null,
 }: FretboardProps) {
-  const stringWeights = [2.1, 1.7, 1.35, 1.1, 0.9, 0.75]
-  const highlightLeftExtension = highlightRangeStart === 0 ? 42 : 0
+  const sequence = useMemo(() => scaleSequence(notes), [notes])
+  const playIdx = useSequencePlayhead(sequence.length, 260, isPlaying, playStartPerf)
+  const playingKey =
+    playIdx >= 0 ? `${sequence[playIdx].stringIdx}-${sequence[playIdx].fret}` : null
+
+  const rangeX = fretX(Math.max(0, highlightRangeStart - 1))
+  const rangeW = fretX(Math.min(FRET_COUNT, highlightRangeEnd)) - rangeX
 
   return (
     <svg
-      className={styles.fretboard}
-      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+      viewBox={`0 0 ${FB_VIEW_W} ${FB_VIEW_H}`}
+      preserveAspectRatio="xMidYMid meet"
+      className={styles.svg}
       role="img"
       aria-label={scaleName ? `${scaleName} — fretboard diagram` : 'Fretboard scale diagram'}
-      preserveAspectRatio="xMidYMid meet"
     >
       <defs>
-        <linearGradient id="fretwire" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#b8a78a" />
-          <stop offset="45%" stopColor="#7a6b56" />
-          <stop offset="100%" stopColor="#5c4f3f" />
+        <linearGradient id="fb-range" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.25" />
         </linearGradient>
-        <linearGradient id="neck" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--fretboard-wood)" />
-          <stop offset="100%" stopColor="var(--fretboard-wood-edge)" />
-        </linearGradient>
-        <filter id="grain" x="0" y="0">
-          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" />
-          <feColorMatrix
-            type="matrix"
-            values="0 0 0 0 0.35  0 0 0 0 0.28  0 0 0 0 0.2  0 0 0 0.06 0"
-          />
-          <feComposite in2="SourceGraphic" operator="in" />
-        </filter>
+        <radialGradient id="fb-play" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stopColor="#ff8a65" stopOpacity="0.55" />
+          <stop offset="100%" stopColor="#ff8a65" stopOpacity="0" />
+        </radialGradient>
       </defs>
 
-      {/* neck */}
+      {/* range wash */}
       <rect
-        x={PAD_L}
-        y={PAD_T - 18}
-        width={VIEW_W - PAD_L - PAD_R}
-        height={VIEW_H - PAD_T - PAD_B + 36}
-        fill="url(#neck)"
-      />
-      <rect
-        x={PAD_L}
-        y={PAD_T - 18}
-        width={VIEW_W - PAD_L - PAD_R}
-        height={VIEW_H - PAD_T - PAD_B + 36}
-        fill="transparent"
-        filter="url(#grain)"
+        x={rangeX}
+        y={FB_PAD_T - 16}
+        width={rangeW}
+        height={FB_VIEW_H - FB_PAD_T - FB_PAD_B + 32}
+        rx={20}
+        fill="url(#fb-range)"
+        opacity={0.55}
       />
 
-      {/* highlight band */}
-      {highlightRangeStart !== undefined && highlightRangeEnd !== undefined && (
-        <rect
-          x={fretX(Math.max(0, highlightRangeStart - 1)) - highlightLeftExtension}
-          y={PAD_T - 16}
-          width={
-            fretX(Math.min(FRET_COUNT, highlightRangeEnd)) -
-            fretX(Math.max(0, highlightRangeStart - 1)) +
-            highlightLeftExtension
-          }
-          height={VIEW_H - PAD_T - PAD_B + 32}
-          fill="var(--accent-wash)"
-        />
-      )}
-
-      {/* fret markers (inlay dots) */}
-      {SINGLE_DOT_FRETS.map((f) => (
+      {/* inlay dots */}
+      {SINGLE_DOTS.map((f) => (
         <circle
-          key={`dot-${f}`}
+          key={`d${f}`}
           cx={fretCenterX(f)}
           cy={(stringY(0) + stringY(5)) / 2}
-          r={5}
-          fill="var(--hairline)"
+          r={3.5}
+          fill="var(--fb-inlay)"
         />
       ))}
-      {DOUBLE_DOT_FRETS.map((f) => (
-        <g key={`ddot-${f}`}>
-          <circle
-            cx={fretCenterX(f)}
-            cy={stringY(3) + STRING_SPACING * 0.4}
-            r={5}
-            fill="var(--hairline)"
-          />
-          <circle
-            cx={fretCenterX(f)}
-            cy={stringY(2) - STRING_SPACING * 0.4}
-            r={5}
-            fill="var(--hairline)"
-          />
+      {DOUBLE_DOTS.map((f) => (
+        <g key={`dd${f}`}>
+          <circle cx={fretCenterX(f)} cy={stringY(4) + 6} r={3.5} fill="var(--fb-inlay)" />
+          <circle cx={fretCenterX(f)} cy={stringY(1) - 6} r={3.5} fill="var(--fb-inlay)" />
         </g>
       ))}
 
       {/* frets */}
       {Array.from({ length: FRET_COUNT + 1 }, (_, i) => i).map((f) => (
         <line
-          key={`fret-${f}`}
+          key={`f${f}`}
           x1={fretX(f)}
-          y1={PAD_T - 10}
+          y1={FB_PAD_T - 6}
           x2={fretX(f)}
-          y2={VIEW_H - PAD_B + 10}
-          stroke={f === 0 ? 'var(--ink)' : 'url(#fretwire)'}
-          strokeWidth={f === 0 ? 5 : 2.2}
-          strokeLinecap="square"
+          y2={FB_VIEW_H - FB_PAD_B + 6}
+          stroke={f === 0 ? 'var(--fb-nut)' : 'var(--fb-fret)'}
+          strokeWidth={f === 0 ? 3 : 1}
         />
       ))}
 
       {/* strings */}
-      {Array.from({ length: STRINGS }, (_, i) => i).map((s) => (
+      {Array.from({ length: STRINGS }, (_, s) => s).map((s) => (
         <line
-          key={`string-${s}`}
-          x1={PAD_L - 4}
+          key={`s${s}`}
+          x1={FB_PAD_L - 4}
           y1={stringY(s)}
-          x2={VIEW_W - PAD_R}
+          x2={FB_VIEW_W - FB_PAD_R}
           y2={stringY(s)}
-          stroke="var(--string)"
-          strokeWidth={stringWeights[s]}
-          strokeLinecap="round"
+          stroke="var(--fb-string)"
+          strokeWidth={0.8 + s * 0.14}
         />
       ))}
 
-      {/* fret numbers below */}
-      {Array.from({ length: FRET_COUNT + 1 }, (_, i) => i)
-        .filter((f) => f === 0 || SINGLE_DOT_FRETS.includes(f) || DOUBLE_DOT_FRETS.includes(f))
-        .map((f) => (
-          <text
-            key={`num-${f}`}
-            x={f === 0 ? PAD_L - 18 : fretCenterX(f)}
-            y={VIEW_H - 12}
-            textAnchor="middle"
-            className={styles.fretNumber}
-          >
-            {f}
-          </text>
-        ))}
-
-      {/* open string labels */}
-      {STANDARD_TUNING.map((pc, s) => (
+      {/* fret numbers */}
+      {FRET_NUMBERS.map((f) => (
         <text
-          key={`tuning-${s}`}
-          x={PAD_L - 32}
-          y={stringY(s) + 4}
+          key={`n${f}`}
+          x={f === 0 ? FB_PAD_L - 22 : fretCenterX(f)}
+          y={FB_VIEW_H - 14}
           textAnchor="middle"
-          className={styles.tuningLabel}
+          className={styles.fretnum}
         >
-          {PITCH_NAMES_SHARP[pc].replace('♯', '♯')}
+          {f}
         </text>
       ))}
 
       {/* notes */}
-      {notes.map((note) => {
-        const cx = note.fret === 0 ? PAD_L - 18 : fretCenterX(note.fret)
-        const cy = stringY(note.stringIdx)
-        const r = 14
-        const name = noteName(note.pitch)
-        const ariaLabel = note.isRoot
-          ? `Root ${name}, string ${note.stringIdx + 1}, fret ${note.fret}`
-          : `${name}, string ${note.stringIdx + 1}, fret ${note.fret}`
+      {notes.map((n) => {
+        const cx = n.fret === 0 ? FB_PAD_L - 18 : fretCenterX(n.fret)
+        const cy = stringY(n.stringIdx)
+        const key = `${n.stringIdx}-${n.fret}`
+        const playing = key === playingKey
+        const name = noteName(n.pitch)
         return (
-          <g key={`note-${note.stringIdx}-${note.fret}`} role="presentation">
-            <title>{ariaLabel}</title>
+          <g key={key}>
+            <title>
+              {n.isRoot ? `Root ${name}` : name} · string {n.stringIdx + 1} · fret {n.fret}
+            </title>
+            {playing && <circle cx={cx} cy={cy} r={28} fill="url(#fb-play)" />}
             <circle
               cx={cx}
               cy={cy}
-              r={r}
-              fill={note.isRoot ? 'var(--accent)' : 'var(--paper)'}
-              stroke={note.isRoot ? 'var(--accent-deep)' : 'var(--ink)'}
-              strokeWidth={note.isRoot ? 1.2 : 1.6}
+              r={n.isRoot ? 14 : 13}
+              fill={n.isRoot ? 'var(--accent-peach)' : '#ffffff'}
+              stroke={n.isRoot ? 'var(--accent-peach)' : 'var(--ink)'}
+              strokeWidth={n.isRoot ? 0 : 1.2}
             />
-            {showNoteNames && (
-              <text
-                x={cx}
-                y={cy + 4}
-                textAnchor="middle"
-                className={note.isRoot ? styles.noteLabelRoot : styles.noteLabel}
-              >
-                {name}
-              </text>
+            <text
+              x={cx}
+              y={cy + 4}
+              textAnchor="middle"
+              className={n.isRoot ? styles.noteLabelRoot : styles.noteLabel}
+            >
+              {name}
+            </text>
+            {n.isRoot && (
+              <circle
+                cx={cx}
+                cy={cy}
+                r={14}
+                fill="none"
+                stroke="var(--accent-peach)"
+                strokeWidth={0.8}
+                opacity={0.6}
+                className={styles.rootRing}
+                style={{ transformOrigin: `${cx}px ${cy}px` }}
+              />
             )}
           </g>
         )

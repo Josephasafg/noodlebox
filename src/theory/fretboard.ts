@@ -118,3 +118,10 @@ export function notesInPosition(
 export function positionCount(scale: ScaleDef): number {
   return positionsForScale(scale).length
 }
+
+export function scaleSequence(notes: FretNote[]): FretNote[] {
+  return [...notes].sort((a, b) => {
+    if (a.stringIdx !== b.stringIdx) return a.stringIdx - b.stringIdx
+    return a.fret - b.fret
+  })
+}

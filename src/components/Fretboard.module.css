@@ -1,23 +1,13 @@
-.fretboard {
+.svg {
   width: 100%;
   height: auto;
   display: block;
 }
 
-.fretNumber {
+.fretnum {
   font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  fill: var(--ink-faint);
-  letter-spacing: 0.04em;
-}
-
-.tuningLabel {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 600;
-  fill: var(--ink-soft);
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  fill: var(--ink-muted);
 }
 
 .noteLabel {
@@ -25,7 +15,6 @@
   font-size: 11px;
   font-weight: 600;
   fill: var(--ink);
-  letter-spacing: 0.02em;
   pointer-events: none;
 }
 
@@ -33,7 +22,22 @@
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
-  fill: var(--paper);
-  letter-spacing: 0.02em;
+  fill: #ffffff;
   pointer-events: none;
+}
+
+.rootRing {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.1;
+  }
 }

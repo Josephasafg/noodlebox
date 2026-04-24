@@ -16,7 +16,7 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.2",
-    "tone": "^15.1.22"
+    "smplr": "^0.20.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

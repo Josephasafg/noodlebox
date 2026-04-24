@@ -19,7 +19,7 @@ function renderAt(path: string): string {
 describe('App renders without errors', () => {
   it('default route', () => {
     const html = renderAt('/a/minor-pentatonic/1')
-    expect(html).toContain('Fretted')
+    expect(html).toContain('noodlebox')
     expect(html).toContain('minor pentatonic')
   })
 
@@ -58,7 +58,7 @@ describe('App renders without errors', () => {
     for (const k of keys) {
       for (const s of scales) {
         const html = renderAt(`/${k}/${s}/1`)
-        expect(html).toContain('Fretted')
+        expect(html).toContain('noodlebox')
       }
     }
   })
