@@ -28,6 +28,11 @@ export async function startPitchStream(
   onSample: (s: PitchSample) => void,
 ): Promise<PitchStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      throw new Error(
+        'Microphone access requires HTTPS. Open the published site (https://…) on this device, or use Safari/Chrome on the same machine running localhost.',
+      )
+    }
     throw new Error('Microphone API not available in this browser.')
   }
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -143,7 +148,7 @@ export function detectPitch(buf: Float32Array, sampleRate: number): PitchSample 
   }
 
   // Parabolic interpolation around the peak for sub-sample accuracy
-  const refinedLag = parabolicInterpolate(buf, bestLag)
+  const refinedLag = parabolicInterpolate(buf, sampleRate, bestLag)
   const freq = sampleRate / refinedLag
 
   if (!isFinite(freq) || freq < minFreq || freq > maxFreq) {
@@ -152,7 +157,7 @@ export function detectPitch(buf: Float32Array, sampleRate: number): PitchSample 
   return { freq, rms, clarity: bestVal }
 }
 
-function parabolicInterpolate(buf: Float32Array, lag: number): number {
+function parabolicInterpolate(buf: Float32Array, _sampleRate: number, lag: number): number {
   // Re-evaluate ACF at lag-1, lag, lag+1 for a tighter peak estimate.
   const acfAt = (l: number) => {
     if (l < 1 || l >= buf.length) return 0

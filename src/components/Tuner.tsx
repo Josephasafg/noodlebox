@@ -10,7 +10,7 @@
 //
 // Speaks the same visual language as ScaleMenu so the two feel like siblings.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { startPitchStream, type PitchStream, type PitchSample } from '../audio/pitch'
 import { playReferenceTone, type ToneHandle } from '../audio/reference-tone'
 import {
@@ -19,6 +19,7 @@ import {
   tuningById,
   type TuningDef,
 } from '../theory/tuning'
+import { Portal } from './Portal'
 import styles from './Tuner.module.css'
 
 type Mode = 'idle' | 'requesting' | 'live' | 'denied' | 'reference'
@@ -28,8 +29,24 @@ const IN_TUNE_CENTS = 5          // ±5¢ counts as in-tune
 const STAY_IN_TUNE_MS = 600      // hold within band this long → mark string good
 const STRING_GOOD_RESET_MS = 8000 // forget a "good" verdict after this idle
 
+function useLandscapeMobile(): boolean {
+  const query = '(max-height: 520px) and (orientation: landscape)'
+  const [is, setIs] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(query).matches,
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia(query)
+    const onChange = (e: MediaQueryListEvent) => setIs(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return is
+}
+
 export function Tuner() {
   const [open, setOpen] = useState(false)
+  const isLandscape = useLandscapeMobile()
   const [tuningId, setTuningId] = useState<string>('standard')
   const [mode, setMode] = useState<Mode>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -192,7 +209,7 @@ export function Tuner() {
       </button>
 
       {open && (
-        <>
+        <Portal>
           <div className={styles.scrim} onClick={() => void closeDrawer()} aria-hidden="true" />
           <div
             className={styles.drawer}
@@ -209,6 +226,20 @@ export function Tuner() {
               ✕
             </button>
 
+            {isLandscape ? (
+              <LandscapeBody
+                tuning={tuning}
+                mode={mode}
+                error={error}
+                sample={sample}
+                reading={reading}
+                goodSet={goodSet}
+                onEnable={() => void enableMic()}
+                onUseReference={() => setMode('reference')}
+                playStringTone={(i) => void playStringTone(i)}
+              />
+            ) : (
+            <>
             {/* LEFT — tuning picker */}
             <div>
               <span className={styles.label}>Tuning</span>
@@ -308,8 +339,10 @@ export function Tuner() {
                 </>
               )}
             </div>
+            </>
+            )}
           </div>
-        </>
+        </Portal>
       )}
     </>
   )
@@ -500,4 +533,259 @@ function TuningForkIcon({ size = 14 }: { size?: number }) {
       <circle cx="12" cy="22" r="0.6" fill="currentColor" stroke="none" />
     </svg>
   )
+}
+
+/* ============================================================================
+   Landscape phone layout (full-screen takeover)
+   ========================================================================= */
+
+interface Reading {
+  index: number
+  target: { name: string; freq: number }
+  cents: number
+  smoothCents: number
+}
+
+interface LandscapeBodyProps {
+  tuning: TuningDef
+  mode: Mode
+  error: string | null
+  sample: PitchSample
+  reading: Reading | null
+  goodSet: Set<number>
+  onEnable: () => void
+  onUseReference: () => void
+  playStringTone: (idx: number) => void
+}
+
+function LandscapeBody({
+  tuning,
+  mode,
+  error,
+  sample,
+  reading,
+  goodSet,
+  onEnable,
+  onUseReference,
+  playStringTone,
+}: LandscapeBodyProps) {
+  const showSplash = mode === 'idle' || mode === 'requesting' || mode === 'denied'
+  const liveReading = mode === 'live' || mode === 'reference' ? reading : null
+
+  return (
+    <>
+      <header className={styles.head}>
+        <div className={styles.headTitle}>{tuning.displayName}</div>
+      </header>
+
+      <div className={styles.body}>
+        {showSplash ? (
+          <SplashCard
+            mode={mode}
+            error={error}
+            onEnable={onEnable}
+            onUseReference={onUseReference}
+          />
+        ) : (
+          <>
+            <div className={styles.noteBig}>{liveReading ? liveReading.target.name : '—'}</div>
+            <div className={styles.readoutLandscape}>
+              <span className={styles.centsBig}>
+                {centsValueOnly(liveReading?.smoothCents)}
+              </span>
+              <span className={styles.freq}>
+                {sample.freq && liveReading
+                  ? `${sample.freq.toFixed(1)} hz · ${liveReading.target.freq.toFixed(1)}`
+                  : 'play a string'}
+              </span>
+            </div>
+            <LinearGauge cents={liveReading?.smoothCents ?? 0} active={!!liveReading} />
+            <div className={landscapeStatusClass(liveReading?.smoothCents)}>
+              {landscapeStatusText(liveReading?.smoothCents)}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className={styles.stringsRow} role="list">
+        {tuning.strings.map((str, i) => {
+          const isActive = mode === 'live' && reading?.index === i
+          const isGood = goodSet.has(i)
+          const cls = [
+            styles.stringBtn,
+            isActive ? styles.stringBtnActive : '',
+            isGood ? styles.stringBtnTuned : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
+          return (
+            <button
+              key={i}
+              type="button"
+              className={cls}
+              onClick={() => playStringTone(i)}
+              aria-label={`Play reference tone for ${str.name}`}
+            >
+              {str.name}
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
+function SplashCard({
+  mode,
+  error,
+  onEnable,
+  onUseReference,
+}: {
+  mode: Mode
+  error: string | null
+  onEnable: () => void
+  onUseReference: () => void
+}) {
+  const isDenied = mode === 'denied'
+  const isRequesting = mode === 'requesting'
+
+  let title: ReactNode
+  if (isDenied) {
+    title = (
+      <>
+        Mic <span className={styles.splashAccent}>blocked</span>
+      </>
+    )
+  } else if (isRequesting) {
+    title = (
+      <>
+        Allow <span className={styles.splashAccent}>microphone</span>
+      </>
+    )
+  } else {
+    title = (
+      <>
+        Listen with the <span className={styles.splashAccent}>microphone</span>
+      </>
+    )
+  }
+
+  const copy = isDenied
+    ? "Mic access was denied. Open your browser's site settings and re-allow the microphone."
+    : isRequesting
+      ? 'Look for a permissions prompt and tap Allow.'
+      : 'The tuner listens through the mic and auto-detects which string you’re playing.'
+
+  return (
+    <div className={styles.splash}>
+      <div className={styles.splashEyebrow}>Tuner</div>
+      <h2 className={styles.splashTitle}>{title}</h2>
+      <p className={styles.splashCopy}>{copy}</p>
+      {!isRequesting && (
+        <button type="button" className={styles.micBtn} onClick={onEnable}>
+          {isDenied ? 'Try again' : 'Enable microphone'}
+        </button>
+      )}
+      <div className={styles.splashAlt}>
+        or{' '}
+        <button type="button" className={styles.splashAltLink} onClick={onUseReference}>
+          tune by ear with reference tones
+        </button>
+      </div>
+      {error && <div className={styles.splashError}>{error}</div>}
+    </div>
+  )
+}
+
+function LinearGauge({ cents, active }: { cents: number; active: boolean }) {
+  const W = 500
+  const H = 48
+  const margin = 16
+  const trackY = H / 2
+  const clamped = Math.max(-50, Math.min(50, cents))
+  const ratio = (clamped + 50) / 100
+  const markerX = margin + ratio * (W - margin * 2)
+  const inTune = Math.abs(cents) < IN_TUNE_CENTS
+  const color = !active
+    ? 'rgba(42,30,58,0.35)'
+    : inTune
+      ? 'var(--tune-good)'
+      : Math.abs(cents) < 20
+        ? 'var(--tune-warn)'
+        : 'var(--tune-flat)'
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className={styles.gauge} role="img" aria-label="Tuning gauge">
+      <line
+        x1={margin}
+        y1={trackY}
+        x2={W - margin}
+        y2={trackY}
+        stroke="rgba(42,30,58,0.18)"
+        strokeWidth={3}
+        strokeLinecap="round"
+      />
+      <line
+        x1={W / 2 - 18}
+        y1={trackY}
+        x2={W / 2 + 18}
+        y2={trackY}
+        stroke="var(--tune-good)"
+        strokeWidth={5}
+        strokeLinecap="round"
+        opacity={0.85}
+      />
+      <line
+        x1={W / 2}
+        y1={trackY - 12}
+        x2={W / 2}
+        y2={trackY + 12}
+        stroke="rgba(42,30,58,0.35)"
+        strokeWidth={1.5}
+      />
+      {[-50, -25, 25, 50].map((c) => {
+        const r = (c + 50) / 100
+        const x = margin + r * (W - margin * 2)
+        return (
+          <line
+            key={c}
+            x1={x}
+            y1={trackY - 6}
+            x2={x}
+            y2={trackY + 6}
+            stroke="rgba(42,30,58,0.25)"
+            strokeWidth={1}
+          />
+        )
+      })}
+      {active && (
+        <>
+          <circle cx={markerX} cy={trackY} r={9} fill={color} opacity={0.25} />
+          <circle cx={markerX} cy={trackY} r={5} fill={color} />
+        </>
+      )}
+    </svg>
+  )
+}
+
+function centsValueOnly(cents: number | undefined): string {
+  if (cents == null) return '—'
+  const sign = cents > 0 ? '+' : cents < 0 ? '' : ''
+  return `${sign}${cents.toFixed(0)}¢`
+}
+
+function landscapeStatusText(cents: number | undefined): string {
+  if (cents == null) return ''
+  const abs = Math.abs(cents)
+  if (abs < IN_TUNE_CENTS) return 'In tune'
+  return cents < 0 ? 'Flat — tune up' : 'Sharp — tune down'
+}
+
+function landscapeStatusClass(cents: number | undefined): string {
+  const base = styles.status
+  if (cents == null) return base
+  const abs = Math.abs(cents)
+  if (abs < IN_TUNE_CENTS) return `${base} ${styles.statusGood}`
+  if (abs < 20) return `${base} ${styles.statusWarn}`
+  return `${base} ${styles.statusFlat}`
 }

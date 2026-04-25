@@ -363,18 +363,26 @@
   }
 }
 
-/* Short viewports (landscape phones, etc.) — wide but not tall.
-   Trigger lives in the left side rail; collapse it to a square key chip. */
-@media (max-height: 520px) {
+/* ============================================================
+   Landscape mobile (max-height: 520px) — V2 side sheet layout
+   These rules ONLY apply on short viewports (landscape phones).
+   Desktop/portrait layout above is untouched.
+   ============================================================ */
+
+@media (max-height: 520px) and (orientation: landscape) {
+
+  /* The trigger lives in the side rail. Match the rail's icon-square
+     vocabulary — a 40×40 pill with the current key letter, accent fill. */
   .trigger {
     background: var(--accent-gradient);
     color: #fff;
     border-color: transparent;
-    box-shadow: 0 4px 10px -3px rgba(184, 83, 26, 0.45);
+    box-shadow: 0 6px 14px -4px rgba(184, 83, 26, 0.45);
     padding: 0;
     width: 40px;
-    height: 36px;
-    min-height: 36px;
+    height: 40px;
+    min-height: 40px;
+    border-radius: 12px;
     gap: 0;
     justify-content: center;
   }
@@ -392,66 +400,181 @@
     font-size: 14px;
     font-weight: 700;
   }
+
+  /* Scrim — covers the dim fretboard area on the right.
+     Tappable to dismiss. Lighter than desktop scrim because the
+     sheet itself is the focus, fretboard should still be visible. */
+  .scrim {
+    background: rgba(255, 255, 255, 0.25);
+    /* leave the rail uncovered so the user can see they can switch */
+    inset: 0 0 0 64px;
+  }
+
+  /* The drawer becomes a side sheet sliding from the rail's right edge.
+     Width 340px, full height, no border radius. */
   .drawer {
-    grid-template-columns: 180px 1fr;
-    padding: 12px 16px;
-    gap: 16px;
-    width: min(720px, calc(100% - 16px));
-    max-height: calc(100dvh - 16px);
-    border-radius: 22px;
+    left: 64px;
+    top: 0;
+    transform: none;
+    width: 340px;
+    max-width: 340px;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border-left: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 6px 0 24px -8px rgba(90, 60, 120, 0.18);
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(20px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr auto;
+    padding: 14px 16px;
+    gap: 12px;
+    animation: scaleSheetSlideIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /* Hide the chromatic-wheel layout — replaced by a 6×2 key grid. */
+  .left {
+    display: contents;
   }
   .label {
-    display: none;
-  }
-  .left {
-    gap: 6px;
+    /* 'Key' / 'Scale' subhead — minimal, mono, uppercase */
+    display: block;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 0;
   }
   .wheel {
-    width: 150px;
-    height: 150px;
+    /* Was a circle — now a 6-column grid of key squares */
+    width: 100%;
+    height: auto;
+    aspect-ratio: auto;
+    border-radius: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 5px;
+    position: static;
+    padding: 0;
   }
   .key {
-    width: 28px;
-    height: 28px;
-    font-size: 10.5px;
+    /* Position absolutely was for the wheel — reset to grid item */
+    position: static;
+    transform: none;
+    width: 100%;
+    aspect-ratio: 1;
+    height: auto;
+    margin: 0;
+    border-radius: 9px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    color: var(--ink);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+  /* Sharps slightly recessed */
+  .key[aria-label*="#"],
+  .key[aria-label*="♯"] {
+    background: rgba(255, 255, 255, 0.4);
+  }
+  .keyOn {
+    background: var(--accent-gradient);
+    color: #fff;
+    border: none;
+    box-shadow: 0 3px 8px -2px rgba(184, 83, 26, 0.4);
+  }
+  .keyPitch {
+    /* highlighted hover-preview members of a scale */
+    background: rgba(255, 138, 101, 0.18);
   }
   .center {
-    font-size: 28px;
+    /* Big center letter from the wheel — unused in landscape */
+    display: none;
   }
   .hint {
-    font-size: 9.5px;
+    /* small "G · Pentatonic" line — promote into header instead */
+    display: none;
   }
+
+  /* RIGHT column becomes the scale list, full-width below the keys */
   .right {
     gap: 8px;
     overflow-y: auto;
-    padding-right: 4px;
+    padding-right: 2px;
+    min-height: 0;
   }
   .rightHead {
-    font-size: 9.5px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .rightHeadCurrent {
+    display: none;
   }
   .group + .group {
-    margin-top: 0;
+    margin-top: 6px;
   }
   .groupLabel {
+    font-family: var(--mono);
+    font-size: 8.5px;
+    color: var(--ink-muted);
     margin-bottom: 4px;
-  }
-  .scale {
-    padding: 6px 12px;
-    min-height: 28px;
-    font-size: 11px;
+    opacity: 0.85;
   }
   .row {
-    gap: 4px;
+    gap: 5px;
+    flex-wrap: wrap;
   }
+  .scale {
+    padding: 6px 11px;
+    min-height: 28px;
+    font-size: 11.5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .scaleOn {
+    background: var(--accent-gradient);
+    color: #fff;
+    border: none;
+    font-weight: 600;
+    box-shadow: 0 2px 6px -2px rgba(184, 83, 26, 0.4);
+  }
+
+  /* Footer with kbd hints — hide on touch landscape, no keyboard */
   .foot {
     display: none;
   }
+
   .close {
-    top: 8px;
-    right: 10px;
+    top: 12px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.6);
   }
 }
 
+@keyframes scaleSheetSlideIn {
+  from { transform: translateX(-12px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+
+/* hover-as-touch override unchanged */
 @media (hover: none) {
   .trigger:hover,
   .scale:hover:not(.scaleOn),

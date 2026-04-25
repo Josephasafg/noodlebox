@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CHROMATIC_KEYS, noteName, type PitchClass } from '../theory/notes'
 import { SCALE_LIST, scalePitchClasses, type ScaleDef } from '../theory/scales'
+import { Portal } from './Portal'
 import styles from './ScaleMenu.module.css'
 
 const SCALE_GROUPS: ScaleDef['group'][] = [
@@ -125,7 +126,7 @@ export function ScaleMenu({ keyPc, scale, onKeyChange, onScaleChange }: Props) {
       </button>
 
       {open && (
-        <>
+        <Portal>
           <div className={styles.scrim} onClick={close} aria-hidden="true" />
           <div
             className={styles.drawer}
@@ -232,7 +233,7 @@ export function ScaleMenu({ keyPc, scale, onKeyChange, onScaleChange }: Props) {
               </div>
             </div>
           </div>
-        </>
+        </Portal>
       )}
     </>
   )
