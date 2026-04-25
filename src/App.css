@@ -65,13 +65,16 @@
   }
 }
 
-.app__nav,
 .app__header,
 .app__glass,
-.app__foot,
-.app__tweaks {
+.app__foot {
   position: relative;
   z-index: 1;
+}
+
+.app__nav {
+  position: relative;
+  z-index: 60;
 }
 
 /* nav */
@@ -273,112 +276,6 @@
   color: var(--ink-muted);
 }
 
-/* tweaks */
-.app__tweaks {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding-top: 12px;
-}
-
-.app__tweakRow {
-  display: flex;
-  gap: 18px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-
-.app__tweakLabel {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  color: var(--ink-muted);
-  font-weight: 500;
-  padding-top: 8px;
-  min-width: 48px;
-}
-
-.app__chipsRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.app__keyChip {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  padding: 7px 12px;
-  min-width: 40px;
-  border-radius: var(--r-pill);
-  background: var(--glass-pill);
-  color: var(--ink-pill);
-  border: 1px solid var(--glass-border-soft);
-  transition: background 150ms ease, color 150ms ease, transform 150ms ease;
-}
-
-.app__keyChip:hover:not(.is-on) {
-  background: rgba(255, 255, 255, 0.75);
-}
-
-.app__keyChip.is-on {
-  background: var(--accent-gradient);
-  color: #fff;
-  border-color: transparent;
-}
-
-.app__scaleGrid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 22px 36px;
-  flex: 1;
-}
-
-.app__scaleGroup {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.app__scaleGroupLabel {
-  font-family: var(--mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  color: var(--ink-muted);
-}
-
-.app__scaleChip {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  padding: 6px 12px;
-  border-radius: var(--r-pill);
-  background: var(--glass-pill);
-  color: var(--ink-pill);
-  border: 1px solid var(--glass-border-soft);
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.app__scaleChip:hover:not(.is-on) {
-  background: rgba(255, 255, 255, 0.75);
-}
-
-.app__scaleChip.is-on {
-  background: var(--ink);
-  color: #fff;
-  border-color: transparent;
-}
-
-.app__shortcuts {
-  font-size: 11px;
-  color: var(--ink-muted);
-  letter-spacing: 0.04em;
-  padding-top: 4px;
-}
-
 .mono {
   font-family: var(--mono);
   font-weight: 500;
@@ -394,9 +291,5 @@
   }
   .app__navRight {
     gap: 6px;
-  }
-  .app__tweakRow {
-    flex-direction: column;
-    gap: 10px;
   }
 }

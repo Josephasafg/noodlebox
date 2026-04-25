@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Fretboard } from './components/Fretboard'
+import { ScaleMenu } from './components/ScaleMenu'
 import { useScaleState } from './hooks/useScaleState'
 import {
   notesInPosition,
@@ -7,19 +8,10 @@ import {
   rootFretOnLowE,
   scaleSequence,
 } from './theory/fretboard'
-import { CHROMATIC_KEYS, noteName, type PitchClass } from './theory/notes'
-import { SCALE_LIST, scalePitchClasses, type ScaleDef } from './theory/scales'
+import { noteName } from './theory/notes'
+import { scalePitchClasses } from './theory/scales'
 import { playScaleAudio, preloadGuitar, type ScalePlayback } from './audio/guitar'
 import './App.css'
-
-const SCALE_GROUPS: ScaleDef['group'][] = ['major', 'minor', 'pentatonic', 'blues', 'modes']
-const SCALE_GROUP_LABELS: Record<ScaleDef['group'], string> = {
-  major: 'Major',
-  minor: 'Minor',
-  pentatonic: 'Pentatonic',
-  blues: 'Blues',
-  modes: 'Modes',
-}
 
 export function App() {
   const { key, scale, positionIndex, setKey, setScale, cycleKey, cycleScale, cyclePosition } =
@@ -139,6 +131,12 @@ export function App() {
           <span className="app__brand">noodlebox</span>
         </div>
         <div className="app__navRight">
+          <ScaleMenu
+            keyPc={key}
+            scale={scale}
+            onKeyChange={setKey}
+            onScaleChange={setScale}
+          />
           <button
             type="button"
             className={`app__playPill ${playing || loadingAudio ? 'is-on' : ''}`}
@@ -211,59 +209,6 @@ export function App() {
         </div>
       </footer>
 
-      <section className="app__tweaks" aria-label="Key and scale selection">
-        <div className="app__tweakRow">
-          <span className="app__tweakLabel">Key</span>
-          <div className="app__chipsRow" role="radiogroup" aria-label="Key">
-            {CHROMATIC_KEYS.map((pc: PitchClass) => (
-              <button
-                key={pc}
-                type="button"
-                role="radio"
-                aria-checked={pc === key}
-                aria-label={`Key of ${noteName(pc)}`}
-                className={`app__keyChip ${pc === key ? 'is-on' : ''}`}
-                onClick={() => setKey(pc)}
-              >
-                {noteName(pc)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="app__tweakRow">
-          <span className="app__tweakLabel">Scale</span>
-          <div className="app__scaleGrid">
-            {SCALE_GROUPS.map((group) => {
-              const items = SCALE_LIST.filter((s) => s.group === group)
-              if (items.length === 0) return null
-              return (
-                <div key={group} className="app__scaleGroup">
-                  <span className="app__scaleGroupLabel">{SCALE_GROUP_LABELS[group]}</span>
-                  <div className="app__chipsRow">
-                    {items.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={s.id === scale.id}
-                        className={`app__scaleChip ${s.id === scale.id ? 'is-on' : ''}`}
-                        onClick={() => setScale(s.id)}
-                      >
-                        {s.shortName}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-        <div className="app__shortcuts">
-          <span className="mono">← →</span> key &nbsp; · &nbsp;
-          <span className="mono">↑ ↓</span> scale &nbsp; · &nbsp;
-          <span className="mono">[ ]</span> position
-        </div>
-      </section>
     </div>
   )
 }
