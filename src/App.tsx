@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Fretboard } from './components/Fretboard'
 import { ScaleMenu } from './components/ScaleMenu'
+import { Tuner } from './components/Tuner'
 import { useScaleState } from './hooks/useScaleState'
 import {
   notesInPosition,
@@ -137,6 +138,7 @@ export function App() {
             onKeyChange={setKey}
             onScaleChange={setScale}
           />
+          <Tuner />
           <button
             type="button"
             className={`app__playPill ${playing || loadingAudio ? 'is-on' : ''}`}

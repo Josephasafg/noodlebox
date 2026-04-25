@@ -343,51 +343,65 @@
   }
 }
 
-/* Landscape phones: hide chrome, float controls onto the fretboard. */
+/* Landscape phones: collapse to a left side-rail layout.
+   Rail (top→bottom): ScaleMenu trigger · Play · Position numerals.
+   The board fills the remaining width. */
 @media (max-height: 520px) {
   .app {
-    padding: 8px 12px;
-    gap: 8px;
+    padding: 0;
+    gap: 0;
     overflow: hidden;
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    grid-template-rows: 1fr;
   }
-  .app__header {
+  .app__header,
+  .app__hint {
     display: none;
   }
-  .app__brandRow {
-    display: none;
+
+  /* RAIL — reuse the existing nav as the vertical sidebar. */
+  .app__nav {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    background: linear-gradient(180deg,
+      var(--glass-fill-top), var(--glass-fill-bottom));
+    border-right: 1px solid var(--glass-border);
+    backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    height: 100%;
+    width: 56px;
   }
+  .app__brandRow,
   .app__avatar {
     display: none;
   }
-  .app__nav {
-    position: fixed;
-    top: 10px;
-    right: max(12px, env(safe-area-inset-right));
-    z-index: 60;
-    width: auto;
-    background: transparent;
-    pointer-events: none;
-  }
-  .app__nav > * {
-    pointer-events: auto;
-  }
   .app__navRight {
-    gap: 6px;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    align-items: center;
   }
   .app__playPill {
-    padding: 8px 14px;
-    font-size: 12px;
+    width: 40px;
+    padding: 0;
     min-height: 36px;
+    height: 36px;
+    justify-content: center;
     background: var(--accent-gradient);
     color: #fff;
     border-color: transparent;
-    box-shadow: 0 6px 16px -6px rgba(184, 83, 26, 0.45);
+    box-shadow: 0 4px 10px -3px rgba(184, 83, 26, 0.45);
   }
   .app__playPill.is-on {
     background: var(--ink);
-    color: #fff;
     box-shadow: 0 0 0 3px rgba(255, 138, 101, 0.35),
-      0 6px 16px -6px rgba(42, 30, 58, 0.5);
+      0 4px 10px -3px rgba(42, 30, 58, 0.5);
   }
   .app__playPill > span:last-child {
     display: none;
@@ -396,52 +410,67 @@
     font-size: 12px;
     width: 12px;
   }
+
+  /* BOARD */
   .app__glass {
-    flex: 1;
+    grid-column: 2;
+    grid-row: 1;
+    margin: 8px 8px 8px 0;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    padding: 10px;
+    padding: 8px;
+    height: calc(100% - 16px);
   }
   .app__glassInner {
     padding: 6px 8px;
+    flex: 1;
+    display: flex;
+    align-items: center;
   }
+
+  /* FOOTER — pull into the rail column, anchor to bottom, stack vertically. */
   .app__foot {
-    position: fixed;
-    bottom: max(8px, env(safe-area-inset-bottom));
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 60;
-    background: rgba(42, 30, 58, 0.45);
-    backdrop-filter: blur(14px) saturate(1.1);
-    -webkit-backdrop-filter: blur(14px) saturate(1.1);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: var(--r-pill);
-    padding: 4px;
-    width: auto;
-    box-shadow: 0 8px 24px -10px rgba(42, 30, 58, 0.45);
-  }
-  .app__hint {
-    display: none;
+    grid-column: 1;
+    grid-row: 1;
+    align-self: end;
+    justify-self: center;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 0 10px;
+    width: 56px;
+    align-items: center;
+    z-index: 2;
   }
   .app__positions {
-    gap: 2px;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
   }
   .app__posChip {
-    padding: 6px 12px;
-    min-height: 28px;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    border-radius: 50%;
     font-size: 11px;
-    background: transparent;
-    color: rgba(255, 255, 255, 0.78);
-    border-color: transparent;
+    letter-spacing: 0.04em;
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--ink-pill);
+    border: 1px solid var(--glass-border-soft);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .app__posChip:active:not(.is-on) {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.85);
   }
   .app__posChip.is-on {
     background: var(--accent-gradient);
     color: #fff;
-    box-shadow: 0 4px 12px -4px rgba(184, 83, 26, 0.55);
+    border-color: transparent;
+    box-shadow: 0 3px 8px -2px rgba(255, 138, 101, 0.5);
   }
 }
 

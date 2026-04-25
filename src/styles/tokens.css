@@ -30,6 +30,11 @@
   --accent-pink: #ff6a8a;
   --accent-lilac: #c287f0;
 
+  /* tuner status */
+  --tune-flat: #e35d6a;
+  --tune-warn: #f0a35a;
+  --tune-good: #2fb37a;
+
   /* fretboard ink */
   --fb-nut: #3a2a4a;
   --fb-fret: rgba(58, 42, 74, 0.16);

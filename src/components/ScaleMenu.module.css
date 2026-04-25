@@ -364,18 +364,24 @@
 }
 
 /* Short viewports (landscape phones, etc.) — wide but not tall.
-   Comes after the width-based queries so it wins for landscape devices. */
+   Trigger lives in the left side rail; collapse it to a square key chip. */
 @media (max-height: 520px) {
   .trigger {
     background: var(--accent-gradient);
     color: #fff;
     border-color: transparent;
-    box-shadow: 0 6px 16px -6px rgba(184, 83, 26, 0.45);
-    padding: 8px 14px;
+    box-shadow: 0 4px 10px -3px rgba(184, 83, 26, 0.45);
+    padding: 0;
+    width: 40px;
+    height: 36px;
     min-height: 36px;
+    gap: 0;
+    justify-content: center;
   }
-  .triggerDot {
-    background: rgba(255, 255, 255, 0.9);
+  .triggerDot,
+  .triggerScale,
+  .triggerKbd {
+    display: none;
   }
   .triggerKey {
     color: #fff;
@@ -383,7 +389,8 @@
     -webkit-background-clip: initial;
     background-clip: initial;
     -webkit-text-fill-color: #fff;
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 700;
   }
   .drawer {
     grid-template-columns: 180px 1fr;
