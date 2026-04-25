@@ -129,9 +129,11 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.app__playPill:hover {
-  background: rgba(255, 255, 255, 0.75);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .app__playPill:hover {
+    background: rgba(255, 255, 255, 0.75);
+    transform: translateY(-1px);
+  }
 }
 
 .app__playPill:active {
@@ -271,8 +273,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.app__posChip:hover:not(.is-on) {
-  background: rgba(255, 255, 255, 0.7);
+@media (hover: hover) {
+  .app__posChip:hover:not(.is-on) {
+    background: rgba(255, 255, 255, 0.7);
+  }
 }
 
 .app__posChip:active:not(.is-on) {
@@ -343,60 +347,55 @@
   }
 }
 
-/* Landscape phones: collapse to a left side-rail layout.
-   Rail (top→bottom): ScaleMenu trigger · Play · Position numerals.
-   The board fills the remaining width. */
-@media (max-height: 520px) {
+/* Landscape phones: full-bleed fretboard with floating chrome that
+   clears the Dynamic Island via safe-area-insets.
+   Top-right: ScaleMenu trigger · Tuner · Play.
+   Bottom-center: Position chips in a single glass pill. */
+@media (max-height: 520px) and (orientation: landscape) {
   .app {
     padding: 0;
     gap: 0;
     overflow: hidden;
-    display: grid;
-    grid-template-columns: 56px 1fr;
-    grid-template-rows: 1fr;
   }
   .app__header,
   .app__hint {
     display: none;
   }
 
-  /* RAIL — reuse the existing nav as the vertical sidebar. */
+  /* Floating top-right cluster of triggers. */
   .app__nav {
-    grid-column: 1;
-    grid-row: 1;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 10px;
-    padding: 10px 0;
-    background: linear-gradient(180deg,
-      var(--glass-fill-top), var(--glass-fill-bottom));
-    border-right: 1px solid var(--glass-border);
-    backdrop-filter: blur(18px) saturate(1.1);
-    -webkit-backdrop-filter: blur(18px) saturate(1.1);
-    height: 100%;
-    width: 56px;
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top, 0));
+    right: max(12px, env(safe-area-inset-right, 0));
+    z-index: 60;
+    width: auto;
+    background: transparent;
+    pointer-events: none;
+  }
+  .app__nav > * {
+    pointer-events: auto;
   }
   .app__brandRow,
   .app__avatar {
     display: none;
   }
   .app__navRight {
-    flex-direction: column;
+    flex-direction: row;
     gap: 8px;
-    width: 100%;
+    width: auto;
     align-items: center;
   }
   .app__playPill {
     width: 40px;
     padding: 0;
-    min-height: 36px;
-    height: 36px;
+    min-height: 40px;
+    height: 40px;
+    border-radius: 12px;
     justify-content: center;
     background: var(--accent-gradient);
     color: #fff;
     border-color: transparent;
-    box-shadow: 0 4px 10px -3px rgba(184, 83, 26, 0.45);
+    box-shadow: 0 6px 14px -4px rgba(184, 83, 26, 0.45);
   }
   .app__playPill.is-on {
     background: var(--ink);
@@ -411,40 +410,54 @@
     width: 12px;
   }
 
-  /* BOARD */
+  /* Fretboard fills the whole viewport. Reserve room at the bottom for
+     the floating position pill so the SVG never sits under it. */
   .app__glass {
-    grid-column: 2;
-    grid-row: 1;
-    margin: 8px 8px 8px 0;
+    flex: 1;
+    margin: 0;
+    padding-top: max(10px, calc(env(safe-area-inset-top, 0) + 4px));
+    padding-bottom: calc(54px + env(safe-area-inset-bottom, 0));
+    padding-left: max(10px, env(safe-area-inset-left, 0));
+    padding-right: max(10px, env(safe-area-inset-right, 0));
     display: flex;
     flex-direction: column;
     justify-content: center;
-    padding: 8px;
-    height: calc(100% - 16px);
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    height: 100dvh;
   }
   .app__glassInner {
-    padding: 6px 8px;
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
     flex: 1;
     display: flex;
     align-items: center;
   }
 
-  /* FOOTER — pull into the rail column, anchor to bottom, stack vertically. */
+  /* Bottom-center position pill. */
   .app__foot {
-    grid-column: 1;
-    grid-row: 1;
-    align-self: end;
-    justify-self: center;
-    flex-direction: column;
-    gap: 4px;
-    padding: 0 0 10px;
-    width: 56px;
-    align-items: center;
-    z-index: 2;
+    position: fixed;
+    bottom: max(8px, env(safe-area-inset-bottom, 0));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 60;
+    background: rgba(42, 30, 58, 0.45);
+    backdrop-filter: blur(14px) saturate(1.1);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--r-pill);
+    padding: 4px;
+    width: auto;
+    box-shadow: 0 8px 24px -10px rgba(42, 30, 58, 0.45);
   }
   .app__positions {
-    flex-direction: column;
-    gap: 4px;
+    flex-direction: row;
+    gap: 2px;
     align-items: center;
   }
   .app__posChip {
@@ -456,15 +469,15 @@
     border-radius: 50%;
     font-size: 11px;
     letter-spacing: 0.04em;
-    background: rgba(255, 255, 255, 0.55);
-    color: var(--ink-pill);
-    border: 1px solid var(--glass-border-soft);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.78);
+    border-color: transparent;
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
   .app__posChip:active:not(.is-on) {
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.12);
   }
   .app__posChip.is-on {
     background: var(--accent-gradient);
@@ -474,10 +487,3 @@
   }
 }
 
-@media (hover: none) {
-  .app__posChip:hover:not(.is-on),
-  .app__playPill:hover {
-    background: var(--glass-pill);
-    transform: none;
-  }
-}

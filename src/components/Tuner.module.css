@@ -22,9 +22,11 @@
   -webkit-tap-highlight-color: transparent;
   box-sizing: border-box;
 }
-.trigger:hover {
-  background: rgba(255, 255, 255, 0.75);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .trigger:hover {
+    background: rgba(255, 255, 255, 0.75);
+    transform: translateY(-1px);
+  }
 }
 .trigger:active { transform: translateY(0); }
 .triggerIcon {
@@ -88,7 +90,9 @@
   cursor: pointer;
   transition: background 150ms ease;
 }
-.close:hover { background: #fff; color: var(--ink); }
+@media (hover: hover) {
+  .close:hover { background: #fff; color: var(--ink); }
+}
 
 .label {
   font-size: 10px;
@@ -117,7 +121,9 @@
   transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
   box-sizing: border-box;
 }
-.tuning:hover:not(.tuningOn) { background: #fff; }
+@media (hover: hover) {
+  .tuning:hover:not(.tuningOn) { background: #fff; }
+}
 .tuningOn {
   background: var(--ink); color: #fff; border-color: transparent;
 }
@@ -188,8 +194,10 @@
   box-sizing: border-box;
   transition: background 150ms ease;
 }
-.string:hover:not(.stringActive):not(.stringGood) {
-  background: rgba(255, 255, 255, 0.75);
+@media (hover: hover) {
+  .string:hover:not(.stringActive):not(.stringGood) {
+    background: rgba(255, 255, 255, 0.75);
+  }
 }
 .stringName { font-size: 13px; font-weight: 600; color: var(--ink); }
 .stringHz { font-size: 9px; color: var(--ink-muted); letter-spacing: 0.06em; }
@@ -254,7 +262,9 @@
   text-underline-offset: 3px;
   cursor: pointer;
 }
-.permAlt:hover { color: var(--ink-pill); }
+@media (hover: hover) {
+  .permAlt:hover { color: var(--ink-pill); }
+}
 .permError {
   font-family: var(--mono); font-size: 11px;
   color: var(--tune-flat);
@@ -391,7 +401,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px 0 78px; /* leave 64px for left rail + breathing */
+    padding:
+      14px
+      max(18px, env(safe-area-inset-right, 0))
+      0
+      max(18px, env(safe-area-inset-left, 0));
     background: transparent;
     border: none;
   }
@@ -424,7 +438,7 @@
   /* Close button — pill in top-right */
   .close {
     top: 14px;
-    right: 18px;
+    right: max(18px, env(safe-area-inset-right, 0));
     width: auto;
     height: 36px;
     padding: 0 14px 0 12px;
@@ -450,7 +464,11 @@
     position: relative;
     z-index: 1;
     grid-column: 1;
-    padding: 8px 78px 0 78px;
+    padding:
+      8px
+      max(20px, env(safe-area-inset-right, 0))
+      0
+      max(20px, env(safe-area-inset-left, 0));
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -593,7 +611,11 @@
     z-index: 2;
     display: flex;
     gap: 8px;
-    padding: 10px 18px 14px 78px;
+    padding:
+      10px
+      max(18px, env(safe-area-inset-right, 0))
+      max(14px, env(safe-area-inset-bottom, 0))
+      max(18px, env(safe-area-inset-left, 0));
     background: linear-gradient(to top, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
   }
   .stringBtn {
@@ -636,13 +658,3 @@
   to   { opacity: 1; }
 }
 
-@media (hover: none) {
-  .trigger:hover,
-  .tuning:hover:not(.tuningOn),
-  .string:hover:not(.stringActive):not(.stringGood),
-  .stringBtn:hover,
-  .micBtn:hover {
-    background: var(--glass-pill);
-    transform: none;
-  }
-}

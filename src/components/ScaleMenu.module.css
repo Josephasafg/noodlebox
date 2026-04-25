@@ -18,9 +18,11 @@
   -webkit-tap-highlight-color: transparent;
   box-sizing: border-box;
 }
-.trigger:hover {
-  background: rgba(255, 255, 255, 0.75);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .trigger:hover {
+    background: rgba(255, 255, 255, 0.75);
+    transform: translateY(-1px);
+  }
 }
 .trigger:active {
   transform: translateY(0);
@@ -113,9 +115,11 @@
   cursor: pointer;
   transition: background 150ms ease;
 }
-.close:hover {
-  background: #fff;
-  color: var(--ink);
+@media (hover: hover) {
+  .close:hover {
+    background: #fff;
+    color: var(--ink);
+  }
 }
 
 /* ===== left: wheel ===== */
@@ -165,9 +169,11 @@
     transform 180ms ease, box-shadow 180ms ease;
   padding: 0;
 }
-.key:hover:not(.keyOn) {
-  background: #fff;
-  color: var(--ink);
+@media (hover: hover) {
+  .key:hover:not(.keyOn) {
+    background: #fff;
+    color: var(--ink);
+  }
 }
 .keyOn {
   background: var(--accent-gradient);
@@ -263,8 +269,10 @@
 .key {
   -webkit-tap-highlight-color: transparent;
 }
-.scale:hover:not(.scaleOn) {
-  background: #fff;
+@media (hover: hover) {
+  .scale:hover:not(.scaleOn) {
+    background: #fff;
+  }
 }
 .scaleOn {
   background: var(--ink);
@@ -406,14 +414,14 @@
      sheet itself is the focus, fretboard should still be visible. */
   .scrim {
     background: rgba(255, 255, 255, 0.25);
-    /* leave the rail uncovered so the user can see they can switch */
-    inset: 0 0 0 64px;
+    /* scrim only covers the area to the right of the side sheet */
+    inset: 0 0 0 calc(340px + env(safe-area-inset-left, 0));
   }
 
-  /* The drawer becomes a side sheet sliding from the rail's right edge.
-     Width 340px, full height, no border radius. */
+  /* The drawer becomes a side sheet sliding from the screen's left edge.
+     Cleared past the Dynamic Island via safe-area-inset-left. */
   .drawer {
-    left: 64px;
+    left: env(safe-area-inset-left, 0);
     top: 0;
     transform: none;
     width: 340px;
@@ -574,15 +582,3 @@
   to   { transform: translateX(0);     opacity: 1; }
 }
 
-/* hover-as-touch override unchanged */
-@media (hover: none) {
-  .trigger:hover,
-  .scale:hover:not(.scaleOn),
-  .key:hover:not(.keyOn) {
-    background: var(--glass-pill);
-    transform: none;
-  }
-  .trigger:hover {
-    background: var(--glass-pill);
-  }
-}
