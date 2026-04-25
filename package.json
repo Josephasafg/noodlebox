@@ -12,11 +12,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@rolldown/binding-darwin-arm64": "^1.0.0-rc.17",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.2",
     "smplr": "^0.20.0"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-darwin-arm64": "^1.0.0-rc.17"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
