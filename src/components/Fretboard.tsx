@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { FretNote } from '../theory/fretboard'
 import { FRET_COUNT, scaleSequence } from '../theory/fretboard'
 import { noteName } from '../theory/notes'
@@ -64,7 +64,19 @@ export function Fretboard({
   const rangeX = fretX(Math.max(0, highlightRangeStart - 1))
   const rangeW = fretX(Math.min(FRET_COUNT, highlightRangeEnd)) - rangeX
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    if (el.scrollWidth <= el.clientWidth + 8) return
+    const ratio = el.scrollWidth / FB_VIEW_W
+    const targetCenter = (rangeX + rangeW / 2) * ratio
+    const desiredScrollLeft = Math.max(0, targetCenter - el.clientWidth / 2)
+    el.scrollTo({ left: desiredScrollLeft, behavior: 'smooth' })
+  }, [rangeX, rangeW])
+
   return (
+    <div className={styles.scroller} ref={scrollerRef}>
     <svg
       viewBox={`0 0 ${FB_VIEW_W} ${FB_VIEW_H}`}
       preserveAspectRatio="xMidYMid meet"
@@ -196,5 +208,6 @@ export function Fretboard({
         )
       })}
     </svg>
+    </div>
   )
 }

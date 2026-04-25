@@ -18,8 +18,7 @@ const SCALE_GROUP_LABELS: Record<ScaleDef['group'], string> = {
   modes: 'Modes',
 }
 
-const WHEEL_RADIUS = 86
-const WHEEL_CENTER = 110
+const WHEEL_RADIUS_PCT = (86 / 220) * 100
 
 interface Props {
   keyPc: PitchClass
@@ -149,8 +148,8 @@ export function ScaleMenu({ keyPc, scale, onKeyChange, onScaleChange }: Props) {
               <div className={styles.wheel} role="radiogroup" aria-label="Key">
                 {CHROMATIC_KEYS.map((pc: PitchClass, i) => {
                   const ang = (i / 12) * Math.PI * 2 - Math.PI / 2
-                  const x = WHEEL_CENTER + WHEEL_RADIUS * Math.cos(ang)
-                  const y = WHEEL_CENTER + WHEEL_RADIUS * Math.sin(ang)
+                  const xPct = 50 + WHEEL_RADIUS_PCT * Math.cos(ang)
+                  const yPct = 50 + WHEEL_RADIUS_PCT * Math.sin(ang)
                   const isOn = pc === keyPc
                   const isPitch =
                     !isOn && hoverPitches?.includes(pc) === true
@@ -165,7 +164,7 @@ export function ScaleMenu({ keyPc, scale, onKeyChange, onScaleChange }: Props) {
                       className={`${styles.key} ${isOn ? styles.keyOn : ''} ${
                         isPitch ? styles.keyPitch : ''
                       }`}
-                      style={{ left: `${x}px`, top: `${y}px` }}
+                      style={{ left: `${xPct}%`, top: `${yPct}%` }}
                       onClick={() => onKeyChange(pc)}
                     >
                       {noteName(pc)}

@@ -1,7 +1,47 @@
+.scroller {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(58, 42, 74, 0.18) transparent;
+  scroll-behavior: smooth;
+}
+
+.scroller::-webkit-scrollbar {
+  height: 6px;
+}
+
+.scroller::-webkit-scrollbar-thumb {
+  background: rgba(58, 42, 74, 0.18);
+  border-radius: 999px;
+}
+
 .svg {
   width: 100%;
   height: auto;
   display: block;
+}
+
+@media (max-width: 900px) {
+  .svg {
+    min-width: 880px;
+  }
+}
+
+@media (max-width: 600px) {
+  .svg {
+    min-width: 760px;
+  }
+}
+
+/* Landscape phones — short viewport. Bump the SVG so notes stay readable;
+   the auto-scroll keeps the active position centered. */
+@media (max-height: 520px) {
+  .svg {
+    min-width: 1180px;
+  }
 }
 
 .fretnum {

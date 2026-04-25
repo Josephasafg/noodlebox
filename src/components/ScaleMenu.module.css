@@ -4,6 +4,7 @@
   align-items: center;
   gap: 10px;
   padding: 10px 16px 10px 14px;
+  min-height: 40px;
   border-radius: var(--r-pill);
   background: var(--glass-pill);
   border: 1px solid var(--glass-border-soft);
@@ -14,10 +15,15 @@
   color: var(--ink);
   cursor: pointer;
   transition: background 150ms ease, transform 150ms ease;
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
 }
 .trigger:hover {
   background: rgba(255, 255, 255, 0.75);
   transform: translateY(-1px);
+}
+.trigger:active {
+  transform: translateY(0);
 }
 .triggerDot {
   width: 10px;
@@ -237,7 +243,9 @@
 }
 .scale {
   all: unset;
-  padding: 8px 14px;
+  padding: 10px 14px;
+  min-height: 36px;
+  box-sizing: border-box;
   border-radius: var(--r-pill);
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid var(--glass-border-soft);
@@ -247,6 +255,13 @@
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease,
     border-color 150ms ease, transform 150ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.scale:active:not(.scaleOn) {
+  background: rgba(255, 255, 255, 0.85);
+}
+.key {
+  -webkit-tap-highlight-color: transparent;
 }
 .scale:hover:not(.scaleOn) {
   background: #fff;
@@ -291,14 +306,153 @@
   .drawer {
     grid-template-columns: 1fr;
     padding: 18px;
-    bottom: 16px;
     border-radius: 24px;
+    width: calc(100% - 28px);
+    max-height: calc(100dvh - 28px);
+    gap: 18px;
   }
   .wheel {
-    width: 180px;
-    height: 180px;
+    width: 188px;
+    height: 188px;
+  }
+  .key {
+    width: 34px;
+    height: 34px;
+    font-size: 11px;
   }
   .center {
     font-size: 40px;
+  }
+  .foot {
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 600px) {
+  .triggerScale,
+  .triggerKbd {
+    display: none;
+  }
+  .trigger {
+    padding: 10px 14px;
+    gap: 8px;
+  }
+  .triggerKey {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .drawer {
+    padding: 14px;
+    width: calc(100% - 20px);
+  }
+  .wheel {
+    width: 168px;
+    height: 168px;
+  }
+  .key {
+    width: 30px;
+    height: 30px;
+    font-size: 10.5px;
+  }
+  .center {
+    font-size: 32px;
+  }
+}
+
+/* Short viewports (landscape phones, etc.) — wide but not tall.
+   Comes after the width-based queries so it wins for landscape devices. */
+@media (max-height: 520px) {
+  .trigger {
+    background: var(--accent-gradient);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 6px 16px -6px rgba(184, 83, 26, 0.45);
+    padding: 8px 14px;
+    min-height: 36px;
+  }
+  .triggerDot {
+    background: rgba(255, 255, 255, 0.9);
+  }
+  .triggerKey {
+    color: #fff;
+    background: none;
+    -webkit-background-clip: initial;
+    background-clip: initial;
+    -webkit-text-fill-color: #fff;
+    font-size: 13px;
+  }
+  .drawer {
+    grid-template-columns: 180px 1fr;
+    padding: 12px 16px;
+    gap: 16px;
+    width: min(720px, calc(100% - 16px));
+    max-height: calc(100dvh - 16px);
+    border-radius: 22px;
+  }
+  .label {
+    display: none;
+  }
+  .left {
+    gap: 6px;
+  }
+  .wheel {
+    width: 150px;
+    height: 150px;
+  }
+  .key {
+    width: 28px;
+    height: 28px;
+    font-size: 10.5px;
+  }
+  .center {
+    font-size: 28px;
+  }
+  .hint {
+    font-size: 9.5px;
+  }
+  .right {
+    gap: 8px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .rightHead {
+    font-size: 9.5px;
+  }
+  .group + .group {
+    margin-top: 0;
+  }
+  .groupLabel {
+    margin-bottom: 4px;
+  }
+  .scale {
+    padding: 6px 12px;
+    min-height: 28px;
+    font-size: 11px;
+  }
+  .row {
+    gap: 4px;
+  }
+  .foot {
+    display: none;
+  }
+  .close {
+    top: 8px;
+    right: 10px;
+  }
+}
+
+@media (hover: none) {
+  .trigger:hover,
+  .scale:hover:not(.scaleOn),
+  .key:hover:not(.keyOn) {
+    background: var(--glass-pill);
+    transform: none;
+  }
+  .trigger:hover {
+    background: var(--glass-pill);
   }
 }

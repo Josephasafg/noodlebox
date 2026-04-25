@@ -1,11 +1,12 @@
 .app {
   position: relative;
   min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
-  padding: 40px 48px 64px;
+  padding: clamp(18px, 3vw, 40px) clamp(16px, 4vw, 48px) clamp(28px, 6vw, 64px);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: clamp(16px, 2.5vw, 24px);
   font-family: var(--sans);
   color: var(--ink);
   overflow: hidden;
@@ -113,7 +114,8 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 10px 18px;
+  min-height: 40px;
   border-radius: var(--r-pill);
   font-family: var(--sans);
   font-size: 13px;
@@ -124,11 +126,16 @@
   -webkit-backdrop-filter: blur(12px) saturate(1.1);
   border: 1px solid var(--glass-border-soft);
   transition: background 150ms ease, color 150ms ease, border-color 150ms ease, transform 150ms ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .app__playPill:hover {
   background: rgba(255, 255, 255, 0.75);
   transform: translateY(-1px);
+}
+
+.app__playPill:active {
+  transform: translateY(0);
 }
 
 .app__playPill.is-on {
@@ -171,10 +178,11 @@
 
 .app__title {
   margin: 0;
-  font-size: 72px;
+  font-size: clamp(40px, 9vw, 72px);
   line-height: 0.92;
   letter-spacing: -0.035em;
   font-weight: 200;
+  word-break: break-word;
 }
 
 .app__key {
@@ -207,6 +215,7 @@
   border: 1px solid var(--glass-border-soft);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  white-space: nowrap;
 }
 
 .app__chip.is-root {
@@ -219,8 +228,8 @@
 .app__glass {
   background: linear-gradient(180deg, var(--glass-fill-top), var(--glass-fill-bottom));
   border: 1px solid var(--glass-border);
-  border-radius: var(--r-glass-outer);
-  padding: 14px;
+  border-radius: clamp(20px, 3vw, 36px);
+  padding: clamp(8px, 1.5vw, 14px);
   backdrop-filter: blur(22px) saturate(1.1);
   -webkit-backdrop-filter: blur(22px) saturate(1.1);
   box-shadow: var(--glass-shadow);
@@ -228,8 +237,8 @@
 
 .app__glassInner {
   background: var(--glass-inner);
-  border-radius: var(--r-glass-inner);
-  padding: 8px 10px;
+  border-radius: clamp(14px, 2.2vw, 26px);
+  padding: clamp(6px, 1vw, 10px);
 }
 
 /* footer */
@@ -249,18 +258,25 @@
 
 .app__posChip {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.12em;
-  padding: 6px 12px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 8px 14px;
   border-radius: var(--r-pill);
   background: var(--glass-pill);
   color: var(--ink-pill);
   border: 1px solid var(--glass-border-soft);
   transition: background 150ms ease, color 150ms ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .app__posChip:hover:not(.is-on) {
   background: rgba(255, 255, 255, 0.7);
+}
+
+.app__posChip:active:not(.is-on) {
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .app__posChip.is-on {
@@ -282,14 +298,157 @@
   color: var(--ink-chip);
 }
 
-@media (max-width: 720px) {
-  .app {
-    padding: 24px 20px 40px;
+@media (max-width: 900px) {
+  .app__navRight {
+    gap: 8px;
   }
-  .app__title {
-    font-size: 48px;
+}
+
+@media (max-width: 600px) {
+  .app__brand {
+    display: none;
+  }
+  .app__avatar {
+    display: none;
+  }
+  .app__playPill {
+    padding: 10px 14px;
+    font-size: 12px;
+  }
+  .app__playPill > span:last-child {
+    display: none;
+  }
+  .app__playIcon {
+    font-size: 12px;
+    width: 12px;
+  }
+  .app__chips {
+    gap: 4px;
+  }
+  .app__chip {
+    padding: 5px 10px;
+    font-size: 10px;
+  }
+  .app__hint {
+    font-size: 10px;
+  }
+  .app__foot {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app__navRight {
+    gap: 6px;
+  }
+}
+
+/* Landscape phones: hide chrome, float controls onto the fretboard. */
+@media (max-height: 520px) {
+  .app {
+    padding: 8px 12px;
+    gap: 8px;
+    overflow: hidden;
+  }
+  .app__header {
+    display: none;
+  }
+  .app__brandRow {
+    display: none;
+  }
+  .app__avatar {
+    display: none;
+  }
+  .app__nav {
+    position: fixed;
+    top: 10px;
+    right: max(12px, env(safe-area-inset-right));
+    z-index: 60;
+    width: auto;
+    background: transparent;
+    pointer-events: none;
+  }
+  .app__nav > * {
+    pointer-events: auto;
   }
   .app__navRight {
     gap: 6px;
+  }
+  .app__playPill {
+    padding: 8px 14px;
+    font-size: 12px;
+    min-height: 36px;
+    background: var(--accent-gradient);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 6px 16px -6px rgba(184, 83, 26, 0.45);
+  }
+  .app__playPill.is-on {
+    background: var(--ink);
+    color: #fff;
+    box-shadow: 0 0 0 3px rgba(255, 138, 101, 0.35),
+      0 6px 16px -6px rgba(42, 30, 58, 0.5);
+  }
+  .app__playPill > span:last-child {
+    display: none;
+  }
+  .app__playIcon {
+    font-size: 12px;
+    width: 12px;
+  }
+  .app__glass {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 10px;
+  }
+  .app__glassInner {
+    padding: 6px 8px;
+  }
+  .app__foot {
+    position: fixed;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 60;
+    background: rgba(42, 30, 58, 0.45);
+    backdrop-filter: blur(14px) saturate(1.1);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--r-pill);
+    padding: 4px;
+    width: auto;
+    box-shadow: 0 8px 24px -10px rgba(42, 30, 58, 0.45);
+  }
+  .app__hint {
+    display: none;
+  }
+  .app__positions {
+    gap: 2px;
+  }
+  .app__posChip {
+    padding: 6px 12px;
+    min-height: 28px;
+    font-size: 11px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.78);
+    border-color: transparent;
+  }
+  .app__posChip:active:not(.is-on) {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .app__posChip.is-on {
+    background: var(--accent-gradient);
+    color: #fff;
+    box-shadow: 0 4px 12px -4px rgba(184, 83, 26, 0.55);
+  }
+}
+
+@media (hover: none) {
+  .app__posChip:hover:not(.is-on),
+  .app__playPill:hover {
+    background: var(--glass-pill);
+    transform: none;
   }
 }
