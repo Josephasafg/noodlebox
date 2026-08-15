@@ -273,6 +273,24 @@ def test_renaming_a_shape_corrects_the_bank_instead_of_tying_it(tmp_path: Path) 
     assert len(keeper) == 1, "the wrong entry is gone, not outvoted"
 
 
+def test_a_correction_beside_a_same_named_entry_does_not_crash(tmp_path: Path) -> None:
+    """
+    Removal used to go through list.remove, which compares entries with == and
+    so reaches their numpy templates — 'the truth value of an array is
+    ambiguous', raised the moment the scan passed another entry with the same
+    label. That is the common case: a real bank holds many entries per digit.
+    """
+    same = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
+    other = np.ones((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
+    keeper = bank_mod.Bank(
+        entries=[bank_mod.Entry(label="1", template=same), bank_mod.Entry(label="1", template=other)],
+        path=tmp_path / "bank.json",
+    )
+    keeper.remember([other], {"0": "12b"})
+    assert keeper.recognise([other]) == {0: "12b"}
+    assert keeper.recognise([same]) == {0: "1"}, "the far entry is untouched"
+
+
 def test_a_tie_already_in_the_bank_is_still_not_decided(tmp_path: Path) -> None:
     # remember() can no longer create one, but a bank written by an older
     # version can hold one, and it must be asked about rather than guessed.

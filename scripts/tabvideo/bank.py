@@ -153,9 +153,11 @@ class Bank:
             # would otherwise leave behind. Distances between different
             # characters were measured to start at 0.189, well outside the
             # radius, so anything this close under another name is wrong.
-            for wrong in close:
-                if wrong.label != label:
-                    self.entries.remove(wrong)
+            # Removal is by identity: comparing entries with == reaches their
+            # numpy templates, which refuse to be a single truth value.
+            wrong = {id(entry) for entry in close if entry.label != label}
+            if wrong:
+                self.entries = [entry for entry in self.entries if id(entry) not in wrong]
             if any(entry.label == label for entry in close):
                 continue
             if len(self.entries) >= MAX_ENTRIES:
