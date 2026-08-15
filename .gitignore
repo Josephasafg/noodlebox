@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python tooling in scripts/
+__pycache__/
+.pytest_cache/
+
+# tabvideo extraction output (copyrighted source material)
+build/
