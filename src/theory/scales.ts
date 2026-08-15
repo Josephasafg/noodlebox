@@ -70,6 +70,16 @@ export function getScale(id: string): ScaleDef | null {
   return (SCALES as Record<string, ScaleDef>)[id] ?? null
 }
 
+/**
+ * True when every degree of `inner` also exists in `outer`, so anything written
+ * in `inner` can be played while studying `outer`. Key-independent, since both
+ * interval sets are measured from the root.
+ */
+export function isScaleSubsetOf(inner: ScaleDef, outer: ScaleDef): boolean {
+  const allowed = new Set<number>(outer.intervals)
+  return inner.intervals.every((iv) => allowed.has(iv))
+}
+
 export function scalePitchClasses(root: PitchClass, scale: ScaleDef): PitchClass[] {
   return scale.intervals.map((iv) => mod12(root + iv))
 }
