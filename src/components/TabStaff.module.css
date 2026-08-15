@@ -1,0 +1,45 @@
+.scroller {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.svg {
+  display: block;
+  height: auto;
+  flex: none;
+}
+
+.letter {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--ink-muted);
+}
+
+.fret {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  fill: var(--ink);
+}
+
+.fretActive {
+  fill: #fff;
+}
+
+.mark {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--ink-muted);
+}
+
+.bendLabel {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--accent-peach);
+  dominant-baseline: middle;
+}

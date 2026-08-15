@@ -1,0 +1,105 @@
+.host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.row {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.string {
+  stroke: var(--tab-line);
+  stroke-width: 1;
+}
+
+.barline {
+  stroke: var(--tab-bar);
+  stroke-width: 1.5;
+}
+
+.stringLetter {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--ink-muted);
+  text-anchor: middle;
+}
+
+.barNumber {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--ink-muted);
+}
+
+.marker {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  fill: var(--accent-lilac);
+}
+
+.noteMask {
+  fill: var(--tab-bg);
+}
+
+.fret {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  fill: var(--ink);
+  text-anchor: middle;
+}
+
+.bend {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  fill: var(--accent-peach);
+  text-anchor: start;
+}
+
+.fretGhost {
+  fill: var(--ink-muted);
+  font-size: 11px;
+}
+
+.fretOn {
+  fill: #fff;
+  font-weight: 600;
+}
+
+.noteGlow {
+  fill: var(--accent-lilac);
+}
+
+.legato {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--ink-muted);
+  text-anchor: middle;
+}
+
+.playhead {
+  stroke: var(--accent-peach);
+  stroke-width: 1.5;
+  opacity: 0.85;
+}
+
+.hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .hit:hover {
+    fill: rgba(194, 135, 240, 0.09);
+  }
+}
+
+.hitOn {
+  fill: rgba(255, 138, 101, 0.1);
+}
