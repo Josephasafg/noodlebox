@@ -293,6 +293,78 @@ def test_yt_dlp_accepts_the_options_we_build(tmp_path: Path) -> None:
             pass
 
 
+class _FakeDownloader:
+    """Stands in for yt-dlp: fails on the first `failures` attempts, then writes."""
+
+    def __init__(self, options: dict) -> None:
+        self.options = options
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+    def download(self, urls: list[str]) -> None:
+        state = _FakeDownloader.state
+        state["attempts"] += 1
+        state["saw"].append(sorted(p.name for p in state["into"].iterdir()))
+        if state["attempts"] <= state["failures"]:
+            (state["into"] / "clip.mp4.part").write_bytes(b"partial")
+            raise RuntimeError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+        (state["into"] / "clip.mp4").write_bytes(b"video bytes")
+
+
+@pytest.fixture
+def flaky_host(tmp_path: Path, monkeypatch):
+    """A download that 403s a given number of times before working."""
+    import yt_dlp
+
+    monkeypatch.setattr(fetch, "probe", lambda url: {"title": "Lesson", "duration": 100})
+    monkeypatch.setattr(fetch, "RETRY_DELAY_S", 0.0)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _FakeDownloader)
+    into = tmp_path / "work"
+
+    def arrange(failures: int) -> Path:
+        _FakeDownloader.state = {"attempts": 0, "failures": failures, "into": into, "saw": []}
+        return into
+
+    return arrange
+
+
+def test_a_refused_url_is_retried_rather_than_losing_the_reading(flaky_host) -> None:
+    # The signed URL YouTube hands out is sometimes refused on first use, and
+    # yt-dlp will not retry a 403 itself.
+    into = flaky_host(failures=1)
+    got = fetch.download("https://example.com/watch", into)
+    assert _FakeDownloader.state["attempts"] == 2
+    assert got.path.name == "clip.mp4"
+
+
+def test_retrying_starts_from_an_empty_directory(flaky_host) -> None:
+    # A later attempt can settle on a different format with the same extension,
+    # so appending to the abandoned part file would produce an unreadable video.
+    into = flaky_host(failures=2)
+    fetch.download("https://example.com/watch", into)
+    assert _FakeDownloader.state["saw"] == [[], [], []]
+
+
+def test_a_host_that_keeps_refusing_is_reported(flaky_host) -> None:
+    into = flaky_host(failures=fetch.DOWNLOAD_ATTEMPTS)
+    with pytest.raises(fetch.DownloadFailed) as failure:
+        fetch.download("https://example.com/watch", into)
+    assert _FakeDownloader.state["attempts"] == fetch.DOWNLOAD_ATTEMPTS
+    # The host's own words survive: they say more than the status code does.
+    assert "403" in str(failure.value)
+
+
+def test_a_retry_is_announced_so_it_does_not_look_stuck(flaky_host) -> None:
+    into = flaky_host(failures=2)
+    seen: list[int] = []
+    fetch.download("https://example.com/watch", into, on_retry=seen.append)
+    assert seen == [1, 2]
+
+
 def test_node_is_the_runtime_asked_for() -> None:
     # Without a JavaScript runtime yt-dlp hides the high-resolution formats and
     # then fails mid-download with a 403; deno is not installed here.
@@ -307,7 +379,7 @@ def client(video: Path, monkeypatch) -> TestClient:
     """A client whose downloads are stubbed with the fixture video."""
     monkeypatch.setattr(fetch, "check_url", lambda raw: raw.strip())
 
-    def stub(url: str, into: Path, on_progress=None) -> fetch.Fetched:
+    def stub(url: str, into: Path, on_progress=None, on_retry=None) -> fetch.Fetched:
         if on_progress:
             on_progress(1.0)
         return fetch.Fetched(path=video, title="Fixture Lesson", duration_s=6.0, source_url=url)
@@ -397,7 +469,7 @@ def test_an_unknown_job_is_a_not_found(client: TestClient) -> None:
 
 
 def test_a_failed_download_is_reported_rather_than_hidden(client: TestClient, monkeypatch) -> None:
-    def refuse(url, into, on_progress=None):
+    def refuse(url, into, on_progress=None, on_retry=None):
         raise fetch.DownloadFailed("that video is private")
 
     monkeypatch.setattr(fetch, "download", refuse)

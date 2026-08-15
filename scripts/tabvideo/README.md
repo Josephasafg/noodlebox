@@ -32,6 +32,14 @@ muxing and `ffmpeg` is not a dependency. yt-dlp is told to use Node explicitly:
 without a JavaScript runtime it falls back to a limited client, which both hides
 the high-resolution formats and fails mid-download with `HTTP Error 403`.
 
+A 403 also happens with a runtime present, because the media URL is signed for one
+address and moment and YouTube sometimes refuses one on first use — twice in a row
+here, on a video that then downloaded fine. yt-dlp will not retry that itself: its
+downloader re-raises any status under 500 immediately, so `retries` covers dropped
+connections and server faults but never this. Recovering means extracting again for
+a freshly signed URL, which the service does up to five times before giving up. If
+*every* video fails this way instead, yt-dlp is out of date: `pip install -U yt-dlp`.
+
 ## Why naming the shapes is left to a person
 
 It is the one step here that is not automatic, so it is worth saying plainly that

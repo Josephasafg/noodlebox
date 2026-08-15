@@ -7,6 +7,8 @@ numpy>=1.26
 # The service the app talks to.
 fastapi>=0.115
 uvicorn>=0.30
+# A floor rather than a pin on purpose: video sites change under it, and an old
+# copy fails with a 403 that looks like a broken link.
 yt-dlp>=2024.8.6
 
 # Tests only.

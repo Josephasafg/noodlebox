@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -39,6 +40,22 @@ FORMAT = "bv*[height<=1440][ext=mp4]/bv*[height<=1440]/bv*/b"
 # this is *not* the shape the `--js-runtimes` command line option parses into, which
 # the CLI converts before constructing YoutubeDL.
 JS_RUNTIMES = {"node": {}}
+
+# A media URL is signed for one address and one moment, and YouTube hands out
+# ones that are refused on first use often enough to matter — a whole reading was
+# lost to it. yt-dlp will not retry that itself: its downloader re-raises any
+# status below 500 immediately, so `retries` covers transport errors and server
+# faults but never a 403. Getting a usable URL means extracting again, which is
+# why the retry lives out here rather than in the downloader's options.
+#
+# Five, not two: the refusal was seen twice in a row on the same video, so the
+# rate is high enough that three attempts would still lose a reading now and
+# then. A wasted attempt costs one extraction and the delay below, which is
+# nothing beside re-reading a whole video. The delay does not grow — each attempt
+# is signed afresh, so this is a bad URL rather than a rate limit, and waiting
+# longer buys nothing.
+DOWNLOAD_ATTEMPTS = 5
+RETRY_DELAY_S = 2.0
 
 
 class UrlRejected(Exception):
@@ -164,12 +181,28 @@ def check_limits(info: dict) -> None:
         )
 
 
-def download(url: str, into: Path, on_progress=None) -> Fetched:
+def _empty(into: Path) -> None:
+    """
+    Clear a working directory between download attempts.
+
+    Resuming would be faster, but a second attempt may settle on a different
+    format with the same extension, and yt-dlp would append it to the part file
+    left by the first — a file that decodes as neither. Starting over is cheap
+    beside reading the video and cannot produce that.
+    """
+    for path in sorted(into.iterdir()):
+        if path.is_file():
+            path.unlink(missing_ok=True)
+
+
+def download(url: str, into: Path, on_progress=None, on_retry=None) -> Fetched:
     """
     Fetch the video stream into `into`, bounded in length and size.
 
     `on_progress` is called with a 0..1 fraction where one is known, because a
     download is the slowest part of reading a video and the app is showing it.
+    `on_retry` is called with the attempt that just failed, so a retry reads as
+    progress rather than as a stall.
     """
     import yt_dlp
 
@@ -185,11 +218,26 @@ def download(url: str, into: Path, on_progress=None) -> Fetched:
         if total:
             on_progress(min(1.0, done / total))
 
-    try:
-        with yt_dlp.YoutubeDL(download_options(into, hook)) as downloader:
-            downloader.download([url])
-    except Exception as problem:
-        raise DownloadFailed(f"That video could not be downloaded: {problem}") from problem
+    # `probe` already reached this video, so it is public and of a readable
+    # length; a download that fails now is far likelier to be a refused URL than
+    # anything permanent, and each attempt extracts again to get a fresh one.
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        _empty(into)
+        try:
+            with yt_dlp.YoutubeDL(download_options(into, hook)) as downloader:
+                downloader.download([url])
+            break
+        except Exception as problem:  # yt-dlp raises a wide variety
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise DownloadFailed(
+                    f"That video could not be downloaded after {DOWNLOAD_ATTEMPTS} "
+                    f"attempts: {problem}. If every video fails this way, run "
+                    "`pip install -U yt-dlp` — video sites change and an old copy "
+                    "stops being able to read them."
+                ) from problem
+            if on_retry:
+                on_retry(attempt)
+            time.sleep(RETRY_DELAY_S)
 
     files = sorted(p for p in into.iterdir() if p.is_file() and p.stat().st_size > 0)
     if not files:

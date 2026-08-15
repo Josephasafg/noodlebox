@@ -181,7 +181,17 @@ def _run(job: Job) -> None:
         def downloaded(fraction: float) -> None:
             job.progress = fraction
 
-        got = fetch.download(job.url, job.workdir, on_progress=downloaded)
+        def retrying(attempt: int) -> None:
+            # The bar restarts from nothing, so say why rather than appear stuck.
+            # Phrased in the past, because this stays on screen while the next
+            # attempt downloads perfectly happily.
+            job.progress = None
+            job.stage = (
+                f"the video host refused a request; fetching again "
+                f"({attempt + 1} of {fetch.DOWNLOAD_ATTEMPTS})"
+            )
+
+        got = fetch.download(job.url, job.workdir, on_progress=downloaded, on_retry=retrying)
         job.title = got.title
         job.progress = None
 
