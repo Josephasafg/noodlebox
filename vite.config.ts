@@ -7,6 +7,16 @@ export default defineConfig({
   optimizeDeps: {
     include: ['smplr'],
   },
+  server: {
+    proxy: {
+      // The tab-video extraction service, started alongside by `npm run dev`.
+      // Proxying keeps it same-origin, so no CORS negotiation is involved.
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: false,
+      },
+    },
+  },
   test: {
     environment: 'node',
     globals: true,

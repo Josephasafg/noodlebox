@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# noodlebox — start/stop the dev server from anywhere.
+#
+#   noodlebox            start (or reopen if already running)
+#   noodlebox stop       shut it down
+#   noodlebox restart
+#   noodlebox status
+#   noodlebox logs       tail the dev-server log
+#
+# Install: ln -sf <repo>/scripts/noodlebox ~/.local/bin/noodlebox
+
+set -euo pipefail
+
+# Resolve this script through any symlinks to find the repo root.
+resolve_self() {
+  local src=$1 dir
+  while [ -L "$src" ]; do
+    dir=$(cd -P "$(dirname "$src")" && pwd)
+    src=$(readlink "$src")
+    [[ $src != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+REPO=$(dirname "$(resolve_self "${BASH_SOURCE[0]}")")
+PORT=${NOODLEBOX_PORT:-5173}
+STATE_DIR="${TMPDIR:-/tmp}/noodlebox"
+PID_FILE="$STATE_DIR/dev.pid"
+LOG_FILE="$STATE_DIR/dev.log"
+URL="http://localhost:$PORT/noodlebox/"
+
+mkdir -p "$STATE_DIR"
+
+running_pid() {
+  # Prefer the pid file; fall back to whatever holds the port, so a server
+  # started by hand (npm run dev) is still manageable.
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    cat "$PID_FILE"
+    return 0
+  fi
+  rm -f "$PID_FILE"
+  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true
+}
+
+start() {
+  local pid
+  pid=$(running_pid)
+  if [ -n "$pid" ]; then
+    echo "already running (pid $pid) → $URL"
+    open "$URL" 2>/dev/null || true
+    return 0
+  fi
+
+  [ -d "$REPO/node_modules" ] || (cd "$REPO" && npm install)
+
+  # exec vite directly so $! is the server itself, not an npm wrapper.
+  cd "$REPO"
+  nohup bash -c "exec node_modules/.bin/vite --port $PORT --strictPort" \
+    >"$LOG_FILE" 2>&1 &
+  pid=$!
+  echo "$pid" >"$PID_FILE"
+
+  for _ in $(seq 1 100); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "dev server exited during startup:" >&2
+      tail -20 "$LOG_FILE" >&2
+      rm -f "$PID_FILE"
+      return 1
+    fi
+    if grep -q "ready in" "$LOG_FILE" 2>/dev/null; then
+      echo "started (pid $pid) → $URL"
+      open "$URL" 2>/dev/null || true
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "started (pid $pid) but never reported ready; see: noodlebox logs" >&2
+  return 1
+}
+
+stop() {
+  local pid
+  pid=$(running_pid)
+  if [ -z "$pid" ]; then
+    echo "not running"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "stopped (pid $pid)"
+}
+
+case "${1:-start}" in
+  start|up|"")   start ;;
+  stop|down)     stop ;;
+  restart)       stop; start ;;
+  status)
+    pid=$(running_pid)
+    if [ -n "$pid" ]; then echo "running (pid $pid) → $URL"; else echo "stopped"; fi
+    ;;
+  logs)          tail -f "$LOG_FILE" ;;
+  *)
+    echo "usage: noodlebox [start|stop|restart|status|logs]" >&2
+    exit 2
+    ;;
+esac
