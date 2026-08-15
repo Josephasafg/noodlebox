@@ -12,9 +12,14 @@ interface Props {
 
 /**
  * What may be typed against a shape: a fret number, a muted note, a ghost
- * note's brackets. Anything else is not part of a fret number and belongs empty.
+ * note's brackets — or a technique the engraver fused into one mark. Video
+ * fonts print a hammer-on as a small digit against a full one (`4h6`), a slide
+ * as a dash beside its number (`12-`, `-12`, or a lone `-`), and a pull-off as
+ * an arc over the pair (`4p2`; a lone arc is `~`, an arc fused to its digit is
+ * `4~` or `~4`). Every prefix of a valid name must also pass, because this is
+ * tested on each keystroke.
  */
-const ALLOWED = /^(\d{0,2}|x|X|\(|\))$/
+const ALLOWED = /^(\d{1,2}([hp]\d{0,2}|-{1,2}|~)?|-{1,2}\d{0,2}|~\d{0,2}|[xX()])?$/
 
 /**
  * Naming the shapes found in a video.
@@ -74,10 +79,12 @@ export function ShapeNamer({ job, busy, onSubmit, onCancel }: Props) {
         </header>
 
         <p className={styles.explain}>
-          Type what each shape says. Leave anything that is not part of a fret number empty — a
-          slur, a beam, half a slide — since an empty box is counted while a wrong one becomes a
-          wrong note everywhere that shape appears. Names are remembered, so the next video in this
-          font needs none of this.
+          Type what each shape says. Techniques have names too: a small digit fused to a full one
+          is a hammer-on (<code>4h6</code>), an arc over a pair is a pull-off (<code>4p2</code>, a
+          lone arc is <code>~</code>), a dash beside a number is a slide (<code>12-</code>, a lone
+          dash is <code>-</code>), and <code>x</code> is a muted note. Leave anything else empty —
+          an empty box is counted while a wrong name becomes a wrong note everywhere that shape
+          appears. Names are remembered, so the next video in this font needs none of this.
         </p>
 
         <div className={styles.meter}>
@@ -115,10 +122,10 @@ export function ShapeNamer({ job, busy, onSubmit, onCancel }: Props) {
                 <input
                   className={styles.entry}
                   type="text"
-                  inputMode="numeric"
+                  inputMode="text"
                   autoComplete="off"
                   spellCheck={false}
-                  maxLength={2}
+                  maxLength={5}
                   value={value}
                   disabled={busy}
                   aria-label={`Name for shape ${shape.index}, which appears ${shape.count} times`}

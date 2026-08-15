@@ -63,6 +63,21 @@ describe('naming the shapes found in a video', () => {
     }
   })
 
+  it('accepts a technique name, including every state passed through typing it', () => {
+    open([shape({ index: 0 })])
+    const box = boxFor(0) as HTMLInputElement
+    // Typing "12p10" passes through each prefix, and each must be allowed or
+    // the full name could never be entered at all.
+    for (const value of ['1', '12', '12p', '12p1', '12p10']) {
+      fireEvent.change(box, { target: { value } })
+      expect(box.value).toBe(value)
+    }
+    for (const value of ['4h6', '12-', '-12', '-', '~', '4~', '~4']) {
+      fireEvent.change(box, { target: { value } })
+      expect(box.value).toBe(value)
+    }
+  })
+
   it('refuses a name that could not be printed on a tab staff', () => {
     open([shape({ index: 0 })])
     const box = boxFor(0) as HTMLInputElement
