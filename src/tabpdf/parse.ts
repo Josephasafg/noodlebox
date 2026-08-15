@@ -728,6 +728,21 @@ function buildBends(
 
   for (const mark of above) {
     const str = mark.str.trim()
+    // The word itself, written by the video reader for an engraved bend arrow
+    // that prints no amount — all that can be said is that the string goes up.
+    if (/^bend$/i.test(str)) {
+      let target = -1
+      for (let i = 0; i < onsets.length; i++) {
+        if (onsets[i].cx > mark.x + spacing * 0.5) break
+        target = i
+      }
+      if (target === -1 || mark.x - onsets[target].cx > spacing * BEND_REACH) {
+        unattached += 1
+        continue
+      }
+      bends.set(onsets[target], { semitones: null, direction: 'up' })
+      continue
+    }
     // "1 1/2" is drawn as two runs, so a bare fraction takes any whole number
     // written immediately before it on the same line.
     let text = str

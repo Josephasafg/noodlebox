@@ -562,6 +562,66 @@ def test_a_lone_dash_shape_is_a_slide_mark() -> None:
     assert _below_staff(texts[0], staff)
 
 
+def test_a_bend_arrow_is_a_mark_and_not_a_character() -> None:
+    """
+    A bend arrow is taller than any digit and narrower than one. Left among the
+    glyphs it normalises into the same template as the digit 1 and clusters with
+    it — 32 of them did on the reference clip, each a phantom note on fret 1.
+    """
+    page = render_system([(2, 150, "7")])
+    line_y = TAB_TOP + 2 * SPACING
+    ink = staff_mod.to_ink(page)
+    # Rising from just right of the 7: three pixels wide, taller than a space.
+    ink[line_y - 22 : line_y - 2, 160:163] = True
+
+    tab = staff_mod.find_staves(staff_mod.find_rules(staff_mod.marks(page)), 6)[0]
+    glyph_texts = [c.width for c in glyphs.components_on_staff(ink, tab)]
+    assert len(glyph_texts) == 1, "only the 7 is a character"
+    marks = glyphs.marks_on_staff(ink, tab)
+    assert len(marks) == 1, "the arrow is collected as a technique mark"
+    assert marks[0].height >= tab.spacing
+
+
+def _above_staff(item, staff) -> bool:
+    return staff.top - staff.spacing * 4.5 <= item.y <= staff.top - staff.spacing * 0.5
+
+
+def test_a_bend_arrow_fused_to_its_digit_becomes_a_bend_mark() -> None:
+    staff = _tab_staff()
+    texts, _ = _emit_one("12b", ["1", "2b"])
+    assert [t.str for t in texts] == ["12", "bend"]
+    note, bend = texts
+    # The word goes where the parser reads bend amounts from: above the staff,
+    # anchored at the note it belongs to.
+    assert _above_staff(bend, staff)
+    assert abs(bend.x - (note.x + note.width / 2)) < 2
+
+
+def test_an_arrow_shaped_mark_is_a_bend_whatever_its_cluster_is_called() -> None:
+    """
+    The arrow's template normalises into the same square as the digit 1 and
+    clusters with it — 32 did on the reference clip — so the cluster's confirmed
+    name is often "1". The name says a person looked; the geometry says which
+    members are arrows.
+    """
+    staff = _tab_staff()
+    arrow = _mark(120, 124, int(staff.lines[2]) - 12, height=22)
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_flat(arrow, "1")
+    texts = emitter.resolve()
+    assert [t.str for t in texts] == ["bend"]
+    assert _above_staff(texts[0], staff)
+
+
+def test_a_lone_bend_arrow_is_a_bend_mark_too() -> None:
+    # The arrow rises from the top of its digit, so it often lands in the
+    # string bucket above and arrives as a run of its own.
+    staff = _tab_staff()
+    texts, _ = _emit_one("b", ["b"])
+    assert [t.str for t in texts] == ["bend"]
+    assert _above_staff(texts[0], staff)
+
+
 def test_a_flat_marks_own_curve_outranks_its_label() -> None:
     """
     Arcs and dashes flatten into near-identical templates and can share one

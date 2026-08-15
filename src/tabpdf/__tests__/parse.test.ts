@@ -462,6 +462,15 @@ describe('parseScore bends', () => {
     expect(withBend('1/2').notes.find((n) => n.fret === 8)?.bend?.semitones).toBe(1)
   })
 
+  it('reads the literal word bend as an amount-less bend', () => {
+    // The video reader writes this for an engraved arrow that prints no
+    // amount: all that can be said is that the string goes up.
+    expect(withBend('bend').notes.find((n) => n.fret === 8)?.bend).toEqual({
+      semitones: null,
+      direction: 'up',
+    })
+  })
+
   it('reassembles an amount printed as two runs', () => {
     const score = parseScore([
       page({

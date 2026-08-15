@@ -105,6 +105,17 @@ def draw_dash(page: np.ndarray, string_index: int, x0: int, x1: int) -> None:
     cv2.line(page, (x0, line_y - 3), (x1, line_y - 3), int(INK), 2)
 
 
+def draw_bend_arrow(page: np.ndarray, string_index: int, x: int) -> None:
+    """
+    A bend arrow rising from just right of a note, as the video font prints it:
+    taller than any digit and narrower than one, which is exactly how the reader
+    tells it from a character.
+    """
+    line_y = TAB_TOP + string_index * TAB_SPACING
+    cv2.line(page, (x, line_y - 2), (x, line_y - 19), int(INK), 2)
+    page[line_y - 19, x - 1 : x + 2] = INK
+
+
 # Notes per system. A real system of music is densely printed, and the density is
 # not cosmetic: `_held_intervals` only calls a swap when the panel changes by more
 # than compression noise, so a sparse fixture reads as one long held system. The

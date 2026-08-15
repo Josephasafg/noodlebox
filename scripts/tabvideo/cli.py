@@ -96,8 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"\nwrote {sheet} and {labels_path}\n"
             'name each shape in the labels file: "7", "x", "(", techniques like\n'
-            '"4h6", "4p2", "12-" or a lone "~" (slur arc) and "-" (slide dash),\n'
-            'and "" for anything else. Then re-run with --labels.\n'
+            '"4h6", "4p2", "12-", "12b" or a lone "~" (slur arc), "-" (slide\n'
+            'dash), "b" (bend arrow), and "" for anything else. Then re-run with\n'
+            "--labels.\n"
             "The tail is mostly beam fragments; leaving it empty is fine."
         )
         return 0

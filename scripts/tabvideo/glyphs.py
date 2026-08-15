@@ -44,6 +44,16 @@ MIN_GLYPH_WIDTH = 0.15
 MIN_MARK_WIDTH = 0.6
 MIN_MARK_PIXELS = 10
 
+# Bend arrows are the other non-character: taller than any digit and narrower
+# than one. Left among the glyphs they normalise into the same template as the
+# digit 1 and cluster with it — measured on the reference clip, 32 arrows sat
+# inside the two clusters named "1", each one a phantom note on fret 1. Nothing
+# else in the band has this shape: the arrows there are 3px wide and 20-23px
+# tall against a 19.4px spacing, while the narrowest vertically-fused pair of
+# digits is 6-7px wide and a lone digit is under 0.8 spaces tall.
+MIN_ARROW_HEIGHT = 1.0
+MAX_ARROW_WIDTH = 0.3
+
 # Unclaimed ink beside a token, in pixels, before the token counts as incomplete.
 # A dropped units digit leaves ten or more pixels behind — that was the median area
 # of the marks rejected as too short — while a stray antialiased pixel or two beside
@@ -194,6 +204,8 @@ def components_on_staff(ink_without_rules: np.ndarray, staff: Staff) -> list[Com
             continue
         if not spacing * MIN_GLYPH_WIDTH <= width <= spacing * 3:
             continue
+        if height >= spacing * MIN_ARROW_HEIGHT and width <= spacing * MAX_ARROW_WIDTH:
+            continue  # a bend arrow, collected by marks_on_staff, not a character
         found.append((int(x), int(y), labels[y : y + height, x : x + width] == label))
     if not found:
         return []
@@ -220,13 +232,14 @@ def components_on_staff(ink_without_rules: np.ndarray, staff: Staff) -> list[Com
 
 def marks_on_staff(ink_without_rules: np.ndarray, staff: Staff) -> list[Component]:
     """
-    The flat technique marks on one staff: slur arcs and slide dashes.
+    The technique marks on one staff: slur arcs, slide dashes, bend arrows.
 
-    These are exactly what `components_on_staff` rejects — wide and shorter than
-    any digit — so they are collected separately rather than by loosening the
-    glyph filters, which were measured against fragments that cluster into
-    phantom notes. A flat mark never joins a run: it decorates the notes beside
-    it, and what it means is decided from its label and its neighbours in `emit`.
+    These are exactly what `components_on_staff` must not keep — arcs and dashes
+    are wide and shorter than any digit, arrows taller than one and narrower —
+    so they are collected separately rather than by loosening the glyph filters,
+    which were measured against fragments that cluster into phantom notes. A
+    mark never joins a run: it decorates the notes beside it, and what it means
+    is decided from its label and its neighbours in `emit`.
     """
     spacing = staff.spacing
     top = max(0, int(round(staff.top - spacing * BAND_MARGIN)))
@@ -240,11 +253,17 @@ def marks_on_staff(ink_without_rules: np.ndarray, staff: Staff) -> list[Componen
         x, y, width, height, area = stats[label]
         if area < MIN_MARK_PIXELS:
             continue
-        if height >= spacing * MIN_GLYPH_HEIGHT:
-            continue  # tall enough to be a glyph, and judged by those rules
-        # The width ceiling matters: staff-line residue that survived rule
-        # removal runs the width of the system, and this is what excludes it.
-        if not spacing * MIN_MARK_WIDTH <= width <= spacing * 3:
+        flat = height < spacing * MIN_GLYPH_HEIGHT
+        arrow = (
+            spacing * MIN_ARROW_HEIGHT <= height <= spacing * MAX_GLYPH_HEIGHT
+            and width <= spacing * MAX_ARROW_WIDTH
+        )
+        if not (flat or arrow):
+            continue  # digit-sized ink is judged by the glyph rules instead
+        # The width floor and ceiling matter for flats: the floor keeps specks
+        # out, and the ceiling excludes staff-line residue that survived rule
+        # removal, which runs the width of the system.
+        if flat and not spacing * MIN_MARK_WIDTH <= width <= spacing * 3:
             continue
         mask = labels[y : y + height, x : x + width] == label
         out.append(

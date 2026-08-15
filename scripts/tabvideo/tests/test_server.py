@@ -131,12 +131,21 @@ def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
     dash beside the 7 read as the remains of a dropped digit and silenced it.
     """
     page = fixture.render_system(
-        [(2, 300, "4"), (2, 330, "2"), (3, 500, "7"), (3, 530, "9"), (1, 700, "7"), (1, 900, "x")],
+        [
+            (2, 300, "4"),
+            (2, 330, "2"),
+            (3, 500, "7"),
+            (3, 530, "9"),
+            (1, 700, "7"),
+            (1, 900, "x"),
+            (4, 1100, "8"),
+        ],
         (20, fixture.WIDTH - 20),
     )
     fixture.draw_arc(page, 2, 310, 328)  # 4 to 2 falls: a pull-off
     fixture.draw_arc(page, 3, 510, 528)  # 7 to 9 rises: a hammer-on
     fixture.draw_dash(page, 1, 712, 724)  # slide away from the 7
+    fixture.draw_bend_arrow(page, 4, 1114)  # the 8 is bent
     video = fixture.write_video(tmp_path / "clip.mp4", pages=[page])
 
     readings = pipeline.read_video(str(video))
@@ -161,9 +170,11 @@ def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
     name(533, line(3), "9", labels)
     name(703, line(1), "7", labels)
     name(903, line(1), "x", labels)
+    name(1103, line(4), "8", labels)
     name(319, line(2) - 9, "~", labels)
     name(519, line(3) - 9, "~", labels)
     name(718, line(1) - 3, "-", labels)
+    name(1114, line(4) - 7, "b", labels)
 
     pages, unspelled = pipeline.emit(readings, shapes, labels)
     assert unspelled == 0, "the dash must not read as a truncated 7"
@@ -171,13 +182,18 @@ def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
     assert texts.count("p") == 1, f"the falling arc should be one pull-off in {texts}"
     assert texts.count("h") == 1, f"the rising arc should be one hammer-on in {texts}"
     assert texts.count("sl.") == 1
+    assert texts.count("bend") == 1, f"the arrow should be one bend in {texts}"
     assert "x" in texts
+    assert "8" in texts, "the bent note itself must still be read"
 
-    # The marks live in the band the parser reads legato marks from.
+    # Legato marks live below the staff and the bend above it, which is where
+    # the parser reads each from.
     staff = reading.staves[0]
     for item in pages[0].texts:
         if item.str in ("h", "p", "sl."):
             assert staff.bottom + staff.spacing * 0.9 <= item.y <= staff.bottom + staff.spacing * 4
+        if item.str == "bend":
+            assert staff.top - staff.spacing * 4.5 <= item.y <= staff.top - staff.spacing * 0.5
 
 
 def test_shapes_left_unnamed_are_counted_not_guessed(video: Path) -> None:
@@ -238,17 +254,38 @@ def test_an_unfamiliar_shape_is_left_for_a_person(tmp_path: Path) -> None:
     assert keeper.recognise([_template(99)]) == {}
 
 
-def test_a_shape_caught_between_two_names_is_not_decided(tmp_path: Path) -> None:
+def test_renaming_a_shape_corrects_the_bank_instead_of_tying_it(tmp_path: Path) -> None:
     """
-    A near-tie between two different names is exactly the case that must be asked
-    about: guessing it would put a wrong note everywhere that shape occurs.
+    Two different names within same-character distance cannot both be right —
+    different characters were measured to start at 0.189 apart, outside the
+    match radius — so the newer confirmation is a correction. It happened for
+    real: a bend arrow fused to a digit was banked as the digit alone, and
+    appending rather than replacing would have left a tie that gets asked about
+    on every video for ever.
     """
     base = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
     nudged = base.copy()
     nudged[0, 0] = 0.02
     keeper = bank_mod.Bank(path=tmp_path / "bank.json")
-    keeper.remember([base], {"0": "6"})
-    keeper.remember([nudged], {"0": "5"})
+    keeper.remember([base], {"0": "1"})
+    keeper.remember([nudged], {"0": "2b"})
+    assert keeper.recognise([base]) == {0: "2b"}
+    assert len(keeper) == 1, "the wrong entry is gone, not outvoted"
+
+
+def test_a_tie_already_in_the_bank_is_still_not_decided(tmp_path: Path) -> None:
+    # remember() can no longer create one, but a bank written by an older
+    # version can hold one, and it must be asked about rather than guessed.
+    base = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
+    nudged = base.copy()
+    nudged[0, 0] = 0.02
+    keeper = bank_mod.Bank(
+        entries=[
+            bank_mod.Entry(label="6", template=base),
+            bank_mod.Entry(label="5", template=nudged),
+        ],
+        path=tmp_path / "bank.json",
+    )
     assert keeper.recognise([base]) == {}
 
 
@@ -526,12 +563,15 @@ def test_technique_names_are_accepted(client: TestClient) -> None:
     job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
     naming = _await_state(client, job_id, "naming")
     labels = {str(shape["index"]): "7" for shape in naming["shapes"]}
-    labels[next(iter(labels))] = "4h6"
+    keys = list(labels)
+    labels[keys[0]] = "4h6"
+    if len(keys) > 1:
+        labels[keys[1]] = "12b"
     answer = client.post(f"/api/extract/{job_id}/labels", json={"labels": labels})
     assert answer.status_code == 200
 
 
-@pytest.mark.parametrize("bad", ["4h", "h6", "seven", "123", "12p100", "--~", "x2"])
+@pytest.mark.parametrize("bad", ["4h", "h6", "seven", "123", "12p100", "--~", "x2", "b2", "bb"])
 def test_a_name_outside_the_grammar_is_refused_not_trimmed(client: TestClient, bad: str) -> None:
     # Trimming would turn a typo into a silently wrong note on every occurrence.
     job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]

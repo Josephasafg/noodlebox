@@ -35,10 +35,14 @@ MAX_FRET = 24
 # brackets, video fonts fuse techniques into single marks: a hammer-on prints as
 # a small digit against a full one ("4h6"), a pull-off as an arc over the pair
 # ("4p2", or a lone "~", or "4~"/"~4" when the arc touches its digit), and a
-# slide as a dash beside its number ("12-", "-12", or a lone "-"). The empty
+# slide as a dash beside its number ("12-", "-12", or a lone "-"), and a bend
+# as an up-curved arrow that may fuse with its digit ("12b", or a lone "b" for
+# the arrow by itself; this font prints no amount, only the arrow). The empty
 # string is a confirmed not-a-number. This is the single definition: the server
 # validates submissions against it and `emit` interprets the same grammar.
-LABEL_RE = re.compile(r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|[x()])?$")
+LABEL_RE = re.compile(
+    r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~|b)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|b|[x()])?$"
+)
 
 
 class ScrollingVideo(Exception):
@@ -303,6 +307,7 @@ _ARC_BEFORE = re.compile(r"^~(\d{1,2})$")
 _SLIDE_AFTER = re.compile(r"^(\d{1,2})(-{1,2})$")
 _SLIDE_BEFORE = re.compile(r"^(-{1,2})(\d{1,2})$")
 _LONE_SLIDE = re.compile(r"^-{1,2}$")
+_BEND_AFTER = re.compile(r"^(\d{1,2})b$")
 
 # How far, in staff spaces, a slur arc reaches for the notes it joins. Notes on
 # one string sit at least 2.5 glyph-heights apart (the run-joining measurement),
@@ -385,6 +390,22 @@ class _StaffTexts:
             )
         )
 
+    def bend(self, cx: float) -> None:
+        # This font draws only the arrow, never an amount, so the word is all
+        # that can honestly be said; the parser turns it into a bend whose
+        # target is unknown, shown as `12↑` rather than an invented fret. It
+        # goes in the band above the staff where bend amounts are read from,
+        # and its left edge is what the parser attaches by.
+        self.marks.append(
+            primitives.Text(
+                str="bend",
+                x=cx + self.dx,
+                y=self.staff.top - self.spacing * 1.5,
+                fontSize=self.spacing * 0.6,
+                width=10,
+            )
+        )
+
     def add_run(self, run: glyphs.Run, spelled: str, shapes: Shapes, labels: dict[str, str]) -> None:
         x0, x1 = float(run.x0), float(run.x1)
         baseline, height = run.baseline, float(run.height)
@@ -442,6 +463,17 @@ class _StaffTexts:
             dash_from, dash_to = span(0, len(dashes))
             self.slide((dash_from + dash_to) / 2)
             return
+        if match := _BEND_AFTER.match(spelled):
+            digits = match.group(1)
+            made = self.note(digits, *span(0, len(digits)), baseline, height)
+            self.bend(made.cx)
+            return
+        if spelled == "b":
+            # The arrow alone. It rises from the top of its digit, so it often
+            # lands in the string bucket above and arrives as its own run; the
+            # parser attaches a bend to the note at its x, whatever the string.
+            self.bend(x0)
+            return
         if _LONE_SLIDE.match(spelled):
             self.slide((x0 + x1) / 2)
             return
@@ -451,7 +483,19 @@ class _StaffTexts:
         self.note(spelled, x0, x1, baseline, height)
 
     def add_flat(self, flat: glyphs.Component, label: str) -> None:
-        # Either technique name confirms the cluster holds technique marks; each
+        # A bend arrow is known by its shape — taller than any digit, narrower
+        # than one. Its label cannot be trusted to say so: the arrow's template
+        # normalises into the same square as the digit 1 and clusters with it,
+        # so the cluster's confirmed name is often "1". The name still matters —
+        # it says a person looked — but which members are arrows is geometry.
+        # Its left edge is what points back at the note the parser attaches to.
+        if label == "b" or (
+            flat.height >= self.spacing * glyphs.MIN_ARROW_HEIGHT
+            and flat.width <= self.spacing * glyphs.MAX_ARROW_WIDTH
+        ):
+            self.bend(float(flat.x0))
+            return
+        # Either flat name confirms the cluster holds technique marks; each
         # mark's own curvature then says which technique, because arcs and
         # dashes flatten into near-identical templates and can share a cluster.
         if label == "~" or _LONE_SLIDE.match(label):

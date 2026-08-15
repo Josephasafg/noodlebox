@@ -72,7 +72,7 @@ describe('naming the shapes found in a video', () => {
       fireEvent.change(box, { target: { value } })
       expect(box.value).toBe(value)
     }
-    for (const value of ['4h6', '12-', '-12', '-', '~', '4~', '~4']) {
+    for (const value of ['4h6', '12-', '-12', '-', '~', '4~', '~4', '12b', 'b']) {
       fireEvent.change(box, { target: { value } })
       expect(box.value).toBe(value)
     }

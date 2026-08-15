@@ -128,6 +128,12 @@ class Bank:
         caller actually decided about are taken: a label missing from the mapping
         was never looked at, which is not the same as a shape confirmed to be
         nothing.
+
+        A confirmation that *contradicts* a stored entry replaces it. A person
+        renaming a shape the bank already claimed to know is a correction — it
+        happened when a bend arrow fused to a digit had been banked as the digit
+        alone — and merely appending would leave two labels at one distance,
+        which reads as a tie and gets asked about on every video for ever.
         """
         added = 0
         for index, centroid in enumerate(centroids):
@@ -137,14 +143,24 @@ class Bank:
             label = labels[key]
             if not isinstance(label, str):
                 continue
-            known = [
-                distance for distance, other in self._nearest(centroid) if other == label
+            template = centroid.astype(np.float32)
+            close = [
+                entry
+                for entry in self.entries
+                if float(np.abs(entry.template - template).mean()) <= MATCH_RADIUS
             ]
-            if known and known[0] <= MATCH_RADIUS:
+            # Contradictions go first, so a correction also clears the tie it
+            # would otherwise leave behind. Distances between different
+            # characters were measured to start at 0.189, well outside the
+            # radius, so anything this close under another name is wrong.
+            for wrong in close:
+                if wrong.label != label:
+                    self.entries.remove(wrong)
+            if any(entry.label == label for entry in close):
                 continue
             if len(self.entries) >= MAX_ENTRIES:
                 break
-            self.entries.append(Entry(label=label, template=centroid.astype(np.float32).copy()))
+            self.entries.append(Entry(label=label, template=template.copy()))
             added += 1
         return added
 

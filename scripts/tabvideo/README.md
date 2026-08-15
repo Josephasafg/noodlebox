@@ -76,7 +76,20 @@ named as what it says rather than left empty:
 | an arc fused to its digit                    | `4~`/`~4` | same, joined to the next/previous note |
 | a dash after or before a number              | `12-`/`-12` | slide             |
 | a lone slide dash                            | `-`       | slide               |
+| an up arrow beside a number                  | `12b`     | bend                |
+| a lone bend arrow                            | `b`       | bend                |
 | a muted-note cross                           | `x`       | dead note           |
+
+This font prints no bend amount, only the arrow, so the bend is shown as `12↑` —
+what the page actually says — rather than an invented target fret.
+
+The arrow needed more than a name. It is taller than any digit and narrower than
+one, and left among the glyphs it normalises into the same template as the digit
+1 and clusters with it: 32 arrows sat inside the clusters named "1" on the
+reference clip, each one emitted as a phantom note on fret 1. Arrows are now
+collected as technique marks by that geometry, never as characters. Renaming a
+shape the bank already claimed to know also *replaces* the wrong entry rather
+than leaving a tie beside it, so one correction heals every later video.
 
 Slur arcs and slide dashes are wide and only a few pixels tall — the opposite of a
 digit — so they are collected separately from the glyph filters, which were
