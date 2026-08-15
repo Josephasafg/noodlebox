@@ -694,6 +694,20 @@ def test_a_bend_arrow_fused_to_its_digit_becomes_a_bend_mark() -> None:
     assert abs(bend.x - (note.x + note.width / 2)) < 2
 
 
+def test_a_bend_arrow_grouped_before_its_digit_is_the_same_bend() -> None:
+    """
+    Which side of the digit the arrow groups on is an accident of its stem.
+
+    It leans over the note rather than sitting beside it, so `group_runs` puts it
+    first about as often as last. Only the trailing order was in the grammar, so
+    a leading one spelled `b10`, matched no pattern, and went out as a note whose
+    text the parser's fret regex rejects — dropped without even being counted.
+    Fifteen notes on the reference clip.
+    """
+    texts, _ = _emit_one("b10", ["b", "1", "0"])
+    assert [t.str for t in texts] == ["10", "bend"]
+
+
 def test_an_arrow_shaped_mark_is_a_bend_whatever_its_cluster_is_called() -> None:
     """
     The arrow's template normalises into the same square as the digit 1 and

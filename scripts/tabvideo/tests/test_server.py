@@ -589,7 +589,8 @@ def test_technique_names_are_accepted(client: TestClient) -> None:
     assert answer.status_code == 200
 
 
-@pytest.mark.parametrize("bad", ["4h", "h6", "seven", "123", "12p100", "--~", "x2", "b2", "bb"])
+# `b2` is deliberately absent: an arrow grouped before its digit is a real name.
+@pytest.mark.parametrize("bad", ["4h", "h6", "seven", "123", "12p100", "--~", "x2", "b123", "bb"])
 def test_a_name_outside_the_grammar_is_refused_not_trimmed(client: TestClient, bad: str) -> None:
     # Trimming would turn a typo into a silently wrong note on every occurrence.
     job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]

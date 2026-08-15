@@ -76,7 +76,7 @@ named as what it says rather than left empty:
 | an arc fused to its digit                    | `4~`/`~4` | same, joined to the next/previous note |
 | a dash after or before a number              | `12-`/`-12` | slide             |
 | a lone slide dash                            | `-`       | slide               |
-| an up arrow beside a number                  | `12b`     | bend                |
+| an up arrow beside a number                  | `12b`/`b12` | bend              |
 | a lone bend arrow                            | `b`       | bend                |
 | a muted-note cross                           | `x`       | dead note           |
 

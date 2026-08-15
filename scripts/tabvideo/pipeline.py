@@ -41,7 +41,7 @@ MAX_FRET = 24
 # string is a confirmed not-a-number. This is the single definition: the server
 # validates submissions against it and `emit` interprets the same grammar.
 LABEL_RE = re.compile(
-    r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~|b)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|b|[x()])?$"
+    r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~|b)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|b\d{1,2}|b|[x()])?$"
 )
 
 
@@ -308,6 +308,10 @@ _SLIDE_AFTER = re.compile(r"^(\d{1,2})(-{1,2})$")
 _SLIDE_BEFORE = re.compile(r"^(-{1,2})(\d{1,2})$")
 _LONE_SLIDE = re.compile(r"^-{1,2}$")
 _BEND_AFTER = re.compile(r"^(\d{1,2})b$")
+# The arrow leans over the note it belongs to rather than sitting after it, so
+# which side of the digit it groups on is down to where its stem happens to
+# start. Both orders mean the same bend.
+_BEND_BEFORE = re.compile(r"^b(\d{1,2})$")
 
 # How far, in staff spaces, a slur arc reaches for the notes it joins. Notes on
 # one string sit at least 2.5 glyph-heights apart (the run-joining measurement),
@@ -475,6 +479,11 @@ class _StaffTexts:
         if match := _BEND_AFTER.match(spelled):
             digits = match.group(1)
             made = self.note(digits, *span(0, len(digits)), baseline, height)
+            self.bend(made.cx)
+            return
+        if match := _BEND_BEFORE.match(spelled):
+            digits = match.group(1)
+            made = self.note(digits, *span(1, len(spelled)), baseline, height)
             self.bend(made.cx)
             return
         if spelled == "b":
