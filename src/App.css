@@ -9,7 +9,9 @@
   gap: clamp(16px, 2.5vw, 24px);
   font-family: var(--sans);
   color: var(--ink);
-  overflow: hidden;
+  /* Vertical growth is allowed so an open tab can extend the page; the blob
+     field clips its own overflow, so only the horizontal axis needs hiding. */
+  overflow-x: hidden;
   background: var(--bg-gradient);
 }
 
@@ -68,6 +70,7 @@
 
 .app__header,
 .app__glass,
+.app__lick,
 .app__foot {
   position: relative;
   z-index: 1;
@@ -359,6 +362,11 @@
   }
   .app__header,
   .app__hint {
+    display: none;
+  }
+  /* No room for a six-line staff at this height — the lick still shows as the
+     highlighted overlay on the full-bleed fretboard and still plays back. */
+  .app__lick {
     display: none;
   }
 

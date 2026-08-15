@@ -35,6 +35,12 @@
   --tune-warn: #f0a35a;
   --tune-good: #2fb37a;
 
+  /* tab notation */
+  --tab-line: rgba(58, 42, 74, 0.3);
+  --tab-bar: rgba(58, 42, 74, 0.22);
+  --tab-mark: rgba(58, 42, 74, 0.55);
+  --tab-bg: rgba(255, 255, 255, 0.92);
+
   /* fretboard ink */
   --fb-nut: #3a2a4a;
   --fb-fret: rgba(58, 42, 74, 0.16);

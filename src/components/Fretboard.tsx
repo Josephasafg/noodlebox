@@ -39,6 +39,10 @@ const SINGLE_DOTS = [3, 5, 7, 9, 15, 17, 19, 21]
 const DOUBLE_DOTS = [12]
 const FRET_NUMBERS = [0, 3, 5, 7, 9, 12, 15, 17, 19, 21]
 
+function noteKey(note: { stringIdx: number; fret: number }): string {
+  return `${note.stringIdx}-${note.fret}`
+}
+
 interface FretboardProps {
   notes: FretNote[]
   highlightRangeStart: number
@@ -46,6 +50,16 @@ interface FretboardProps {
   scaleName?: string
   isPlaying?: boolean
   playStartPerf?: number | null
+  /**
+   * When set, these notes are emphasised and every other note dims — used to
+   * show which notes of the scale a lick actually touches.
+   */
+  overlayNotes?: readonly FretNote[]
+  /**
+   * Currently sounding notes, driven from outside. Takes over from the built-in
+   * scale playhead so lick playback can highlight its own rhythm.
+   */
+  activeKeys?: readonly string[]
 }
 
 export function Fretboard({
@@ -55,11 +69,23 @@ export function Fretboard({
   scaleName,
   isPlaying = false,
   playStartPerf = null,
+  overlayNotes,
+  activeKeys,
 }: FretboardProps) {
   const sequence = useMemo(() => scaleSequence(notes), [notes])
-  const playIdx = useSequencePlayhead(sequence.length, 260, isPlaying, playStartPerf)
-  const playingKey =
-    playIdx >= 0 ? `${sequence[playIdx].stringIdx}-${sequence[playIdx].fret}` : null
+  const external = activeKeys !== undefined
+  const playIdx = useSequencePlayhead(sequence.length, 260, isPlaying && !external, playStartPerf)
+  const internalPlayingKey =
+    playIdx >= 0 ? noteKey(sequence[playIdx]) : null
+
+  const activeSet = useMemo(
+    () => (activeKeys ? new Set(activeKeys) : null),
+    [activeKeys],
+  )
+  const overlaySet = useMemo(
+    () => (overlayNotes && overlayNotes.length > 0 ? new Set(overlayNotes.map(noteKey)) : null),
+    [overlayNotes],
+  )
 
   const rangeX = fretX(Math.max(0, highlightRangeStart - 1))
   const rangeW = fretX(Math.min(FRET_COUNT, highlightRangeEnd)) - rangeX
@@ -166,13 +192,15 @@ export function Fretboard({
       {notes.map((n) => {
         const cx = n.fret === 0 ? FB_PAD_L - 18 : fretCenterX(n.fret)
         const cy = stringY(n.stringIdx)
-        const key = `${n.stringIdx}-${n.fret}`
-        const playing = key === playingKey
+        const key = noteKey(n)
+        const playing = activeSet ? activeSet.has(key) : key === internalPlayingKey
+        const inOverlay = overlaySet ? overlaySet.has(key) : true
+        const dimmed = overlaySet !== null && !inOverlay
         const name = noteName(n.pitch)
         return (
-          <g key={key}>
+          <g key={key} opacity={dimmed ? 0.22 : 1}>
             <title>
-              {n.isRoot ? `Root ${name}` : name} · string {n.stringIdx + 1} · fret {n.fret}
+              {`${n.isRoot ? `Root ${name}` : name} · string ${n.stringIdx + 1} · fret ${n.fret}`}
             </title>
             {playing && <circle cx={cx} cy={cy} r={28} fill="url(#fb-play)" />}
             <circle
@@ -183,6 +211,17 @@ export function Fretboard({
               stroke={n.isRoot ? 'var(--accent-peach)' : 'var(--ink)'}
               strokeWidth={n.isRoot ? 0 : 1.2}
             />
+            {overlaySet !== null && inOverlay && !n.isRoot && (
+              <circle
+                cx={cx}
+                cy={cy}
+                r={17}
+                fill="none"
+                stroke="var(--accent-lilac)"
+                strokeWidth={1.6}
+                opacity={0.8}
+              />
+            )}
             <text
               x={cx}
               y={cy + 4}
