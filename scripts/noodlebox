@@ -7,6 +7,12 @@
 #   noodlebox restart
 #   noodlebox status
 #   noodlebox logs       tail the dev-server log
+#   noodlebox logs api   tail the extraction-service log
+#
+# Starts two things: the app, and the tab-video extraction service the app calls
+# to read a video from a link. The service is optional — everything except
+# importing a video link works without it — so a missing Python or dependency is
+# reported and the app still comes up.
 #
 # Install: ln -sf <repo>/scripts/noodlebox ~/.local/bin/noodlebox
 
@@ -25,9 +31,14 @@ resolve_self() {
 
 REPO=$(dirname "$(resolve_self "${BASH_SOURCE[0]}")")
 PORT=${NOODLEBOX_PORT:-5173}
+# The service reads TABVIDEO_PORT itself, and so does Vite's proxy, so exporting
+# it here is what keeps all three agreeing on where it lives.
+export TABVIDEO_PORT=${TABVIDEO_PORT:-8787}
 STATE_DIR="${TMPDIR:-/tmp}/noodlebox"
 PID_FILE="$STATE_DIR/dev.pid"
 LOG_FILE="$STATE_DIR/dev.log"
+API_PID_FILE="$STATE_DIR/api.pid"
+API_LOG_FILE="$STATE_DIR/api.log"
 URL="http://localhost:$PORT/noodlebox/"
 
 mkdir -p "$STATE_DIR"
@@ -43,8 +54,65 @@ running_pid() {
   lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true
 }
 
+api_pid() {
+  if [ -f "$API_PID_FILE" ] && kill -0 "$(cat "$API_PID_FILE")" 2>/dev/null; then
+    cat "$API_PID_FILE"
+    return 0
+  fi
+  rm -f "$API_PID_FILE"
+  lsof -ti "tcp:$TABVIDEO_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true
+}
+
+# Never fatal: the app is useful without it, so a failure here is reported and
+# start() carries on.
+start_api() {
+  local pid
+  pid=$(api_pid)
+  if [ -n "$pid" ]; then
+    echo "extraction service already running (pid $pid)"
+    return 0
+  fi
+
+  cd "$REPO"
+  nohup bash -c "exec ${PYTHON:-python3} -m scripts.tabvideo.server" \
+    >"$API_LOG_FILE" 2>&1 &
+  pid=$!
+  echo "$pid" >"$API_PID_FILE"
+
+  # It imports OpenCV, so give it a couple of seconds to answer.
+  for _ in $(seq 1 60); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$API_PID_FILE"
+      echo "extraction service failed to start; video links will not import." >&2
+      echo "  pip install -r scripts/tabvideo/requirements.txt   (see: noodlebox logs api)" >&2
+      return 0
+    fi
+    if curl -fsS -m 1 "http://127.0.0.1:$TABVIDEO_PORT/api/health" >/dev/null 2>&1; then
+      echo "extraction service ready (pid $pid) on port $TABVIDEO_PORT"
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "extraction service started (pid $pid) but never answered; see: noodlebox logs api" >&2
+}
+
+stop_api() {
+  local pid
+  pid=$(api_pid)
+  [ -z "$pid" ] && { rm -f "$API_PID_FILE"; return 0; }
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$API_PID_FILE"
+  echo "extraction service stopped (pid $pid)"
+}
+
 start() {
   local pid
+  start_api
   pid=$(running_pid)
   if [ -n "$pid" ]; then
     echo "already running (pid $pid) → $URL"
@@ -82,6 +150,7 @@ start() {
 
 stop() {
   local pid
+  stop_api
   pid=$(running_pid)
   if [ -z "$pid" ]; then
     echo "not running"
@@ -105,11 +174,22 @@ case "${1:-start}" in
   restart)       stop; start ;;
   status)
     pid=$(running_pid)
-    if [ -n "$pid" ]; then echo "running (pid $pid) → $URL"; else echo "stopped"; fi
+    if [ -n "$pid" ]; then echo "app     running (pid $pid) → $URL"; else echo "app     stopped"; fi
+    pid=$(api_pid)
+    if [ -n "$pid" ]; then
+      echo "service running (pid $pid) on port $TABVIDEO_PORT"
+    else
+      echo "service stopped — video links will not import"
+    fi
     ;;
-  logs)          tail -f "$LOG_FILE" ;;
+  logs)
+    case "${2:-app}" in
+      api|service) tail -f "$API_LOG_FILE" ;;
+      *)           tail -f "$LOG_FILE" ;;
+    esac
+    ;;
   *)
-    echo "usage: noodlebox [start|stop|restart|status|logs]" >&2
+    echo "usage: noodlebox [start|stop|restart|status|logs [api]]" >&2
     exit 2
     ;;
 esac

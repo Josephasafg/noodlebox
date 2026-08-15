@@ -22,6 +22,7 @@ given and spends real CPU doing it, so it is not something to expose.
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import tempfile
 import threading
@@ -374,7 +375,15 @@ def discard(job_id: str) -> dict[str, bool]:
 def main() -> None:
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8787, log_level="warning")
+    # Loopback by default, and overridable only through the environment so that
+    # exposing this is always a deliberate act. Vite's proxy reads the same
+    # variable, so the two cannot drift apart.
+    uvicorn.run(
+        app,
+        host=os.environ.get("TABVIDEO_HOST", "127.0.0.1"),
+        port=int(os.environ.get("TABVIDEO_PORT", "8787")),
+        log_level="warning",
+    )
 
 
 if __name__ == "__main__":

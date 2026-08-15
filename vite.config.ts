@@ -9,10 +9,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // The tab-video extraction service, started alongside by `npm run dev`.
-      // Proxying keeps it same-origin, so no CORS negotiation is involved.
+      // The tab-video extraction service, started alongside by `npm run dev` and
+      // by the noodlebox command. Proxying keeps it same-origin, so no CORS
+      // negotiation is involved. TABVIDEO_PORT is the service's own variable, so
+      // the two stay in step wherever it is moved.
       '/api': {
-        target: 'http://127.0.0.1:8787',
+        target: `http://127.0.0.1:${process.env.TABVIDEO_PORT ?? 8787}`,
         changeOrigin: false,
       },
     },
