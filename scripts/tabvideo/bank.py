@@ -1,0 +1,186 @@
+"""
+Remembered shape names, so a font only ever has to be read once.
+
+Naming shapes is the only step in the pipeline a person has to do, and the
+reason it is bearable is that it does not repeat: one video is one font at one
+size, and a second video from the same source prints the same glyphs. Keeping
+every confirmed name against the template it was confirmed for turns the second
+video into no work at all.
+
+This is also the only recognition here that is trustworthy. Matching a glyph
+against *system fonts* was measured at 38% on real video pixels, and Tesseract at
+7-24%, because fret digits are around ten pixels tall — well under the ~14px any
+OCR needs. Matching against a template a person already confirmed, from the same
+rendering, is the case template distance was measured to handle cleanly: two
+renderings of one character land within 0.133 of each other while different
+characters start at 0.189.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from .glyphs import CLUSTER_RADIUS, TEMPLATE_SIZE
+
+# A remembered template has to be at least this close to be taken as the same
+# character. It is the same measured radius the clustering uses, which sits in
+# the gap between the same-character and different-character populations.
+MATCH_RADIUS = CLUSTER_RADIUS
+
+# ...and the nearest entry with a *different* name has to be this much further
+# away again. The measured gap between the two populations is 0.056 wide, so
+# requiring a clear margin inside it keeps a near-tie from being decided by
+# compression noise. A tie is reported as unknown and asked about instead.
+MATCH_MARGIN = 0.03
+
+# Bounded so a long-lived bank cannot grow without limit. Fonts contribute a few
+# dozen shapes each, so this is many videos' worth.
+MAX_ENTRIES = 4000
+
+
+def default_path() -> Path:
+    """Where the bank lives, overridable so tests never touch the real one."""
+    override = os.environ.get("NOODLEBOX_GLYPH_BANK")
+    if override:
+        return Path(override)
+    return Path.home() / ".noodlebox" / "glyph-bank.json"
+
+
+def _encode(template: np.ndarray) -> str:
+    """Templates are 0..1 coverage maps; a byte per pixel is ample precision."""
+    quantised = np.clip(template * 255.0, 0, 255).astype(np.uint8)
+    return base64.b64encode(quantised.tobytes()).decode("ascii")
+
+
+def _decode(payload: str) -> np.ndarray | None:
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except Exception:
+        return None
+    if len(raw) != TEMPLATE_SIZE * TEMPLATE_SIZE:
+        return None
+    flat = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 255.0
+    return flat.reshape((TEMPLATE_SIZE, TEMPLATE_SIZE))
+
+
+@dataclass
+class Entry:
+    """One confirmed name and the shape it was confirmed for."""
+
+    label: str
+    """The character, or empty for a shape confirmed as not part of a fret number."""
+
+    template: np.ndarray
+
+
+class Bank:
+    """Confirmed shape names, matched by template distance."""
+
+    def __init__(self, entries: list[Entry] | None = None, path: Path | None = None) -> None:
+        self.entries = entries or []
+        self.path = path or default_path()
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def _nearest(self, template: np.ndarray) -> list[tuple[float, str]]:
+        return sorted(
+            (float(np.abs(entry.template - template).mean()), entry.label)
+            for entry in self.entries
+        )
+
+    def recognise(self, centroids: list[np.ndarray]) -> dict[int, str]:
+        """
+        Name whichever shapes have been confirmed before.
+
+        Only shapes the bank is sure about appear in the result: a shape with no
+        close match, or one caught between two different names, is left out for a
+        person to decide. An empty string is a real answer — it means the shape
+        was confirmed as something other than a fret number, like a slur
+        fragment — so callers must test for membership, not truthiness.
+        """
+        out: dict[int, str] = {}
+        for index, centroid in enumerate(centroids):
+            ranked = self._nearest(centroid)
+            if not ranked:
+                continue
+            distance, label = ranked[0]
+            if distance > MATCH_RADIUS:
+                continue
+            contrary = next((d for d, other in ranked if other != label), None)
+            if contrary is not None and contrary - distance < MATCH_MARGIN:
+                continue
+            out[index] = label
+        return out
+
+    def remember(self, centroids: list[np.ndarray], labels: dict[str, str]) -> int:
+        """
+        Keep the names a person confirmed, and report how many were new.
+
+        A name already covered by an equally-labelled entry is not stored again,
+        so re-reading the same video does not grow the bank. Only shapes the
+        caller actually decided about are taken: a label missing from the mapping
+        was never looked at, which is not the same as a shape confirmed to be
+        nothing.
+        """
+        added = 0
+        for index, centroid in enumerate(centroids):
+            key = str(index)
+            if key not in labels:
+                continue
+            label = labels[key]
+            if not isinstance(label, str):
+                continue
+            known = [
+                distance for distance, other in self._nearest(centroid) if other == label
+            ]
+            if known and known[0] <= MATCH_RADIUS:
+                continue
+            if len(self.entries) >= MAX_ENTRIES:
+                break
+            self.entries.append(Entry(label=label, template=centroid.astype(np.float32).copy()))
+            added += 1
+        return added
+
+    def save(self) -> None:
+        payload = [
+            {"label": entry.label, "template": _encode(entry.template)} for entry in self.entries
+        ]
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Written beside the target and moved into place, so an interrupted write
+        # cannot leave the bank truncated.
+        temporary = self.path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload), encoding="utf-8")
+        temporary.replace(self.path)
+
+
+def load(path: Path | None = None) -> Bank:
+    """
+    Read the bank, treating any damage as an empty one.
+
+    A bank is a cache of decisions that can always be made again, so failing to
+    read it must never stop a video being processed.
+    """
+    target = path or default_path()
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return Bank(path=target)
+    if not isinstance(raw, list):
+        return Bank(path=target)
+    entries: list[Entry] = []
+    for item in raw[:MAX_ENTRIES]:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label")
+        template = _decode(item["template"]) if isinstance(item.get("template"), str) else None
+        if not isinstance(label, str) or template is None:
+            continue
+        entries.append(Entry(label=label, template=template))
+    return Bank(entries=entries, path=target)
