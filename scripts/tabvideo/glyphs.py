@@ -34,6 +34,16 @@ MIN_GLYPH_PIXELS = 6
 # up with a clear valley between, against a staff spacing of 19.3px.
 MIN_GLYPH_WIDTH = 0.15
 
+# Technique marks are wide and only a few pixels tall — the opposite of a digit.
+# Slur arcs and slide dashes both fail MIN_GLYPH_HEIGHT by design, but dropping
+# them entirely costs twice: their meaning (a hammer-on, a slide) is lost, and
+# their ink is left unclaimed right beside a healthy number, where
+# `flag_truncated` reads it as a dropped digit and silences the note it decorates.
+# Measured on the reference clip: arcs and dashes are 12-26px wide and 1-4px tall
+# against a 19.4px spacing, while true dropped-digit leftovers are digit-width.
+MIN_MARK_WIDTH = 0.6
+MIN_MARK_PIXELS = 10
+
 # Unclaimed ink beside a token, in pixels, before the token counts as incomplete.
 # A dropped units digit leaves ten or more pixels behind — that was the median area
 # of the marks rejected as too short — while a stray antialiased pixel or two beside
@@ -85,6 +95,12 @@ class Component:
     y1: int
     template: np.ndarray
     """Normalised bitmap, TEMPLATE_SIZE square, 0..1."""
+
+    bow: float = 0.0
+    """How far the mark's ink arches above the line joining its ends, in source
+    pixels. Only computed for flat technique marks, where it is what separates a
+    slur arc from a slide dash — normalising onto the template square flattens
+    the curve too much to measure it there."""
 
     @property
     def width(self) -> int:
@@ -202,6 +218,62 @@ def components_on_staff(ink_without_rules: np.ndarray, staff: Staff) -> list[Com
     return sorted(out, key=lambda c: c.cx)
 
 
+def marks_on_staff(ink_without_rules: np.ndarray, staff: Staff) -> list[Component]:
+    """
+    The flat technique marks on one staff: slur arcs and slide dashes.
+
+    These are exactly what `components_on_staff` rejects — wide and shorter than
+    any digit — so they are collected separately rather than by loosening the
+    glyph filters, which were measured against fragments that cluster into
+    phantom notes. A flat mark never joins a run: it decorates the notes beside
+    it, and what it means is decided from its label and its neighbours in `emit`.
+    """
+    spacing = staff.spacing
+    top = max(0, int(round(staff.top - spacing * BAND_MARGIN)))
+    bottom = min(ink_without_rules.shape[0], int(round(staff.bottom + spacing * BAND_MARGIN)))
+
+    band = ink_without_rules[top:bottom].astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(band, connectivity=8)
+
+    out: list[Component] = []
+    for label in range(1, count):
+        x, y, width, height, area = stats[label]
+        if area < MIN_MARK_PIXELS:
+            continue
+        if height >= spacing * MIN_GLYPH_HEIGHT:
+            continue  # tall enough to be a glyph, and judged by those rules
+        # The width ceiling matters: staff-line residue that survived rule
+        # removal runs the width of the system, and this is what excludes it.
+        if not spacing * MIN_MARK_WIDTH <= width <= spacing * 3:
+            continue
+        mask = labels[y : y + height, x : x + width] == label
+        out.append(
+            Component(
+                x0=int(x),
+                y0=int(y) + top,
+                x1=int(x) + int(width),
+                y1=int(y) + int(height) + top,
+                template=_normalise(mask),
+                bow=_bow(mask),
+            )
+        )
+    return sorted(out, key=lambda c: c.cx)
+
+
+def _bow(mask: np.ndarray) -> float:
+    """
+    How far a flat mark's ink arches above the line joining its ends.
+
+    A slur arc bows up by a couple of pixels; a slide dash is straight. Measured
+    here on the source pixels because the template square flattens the curve.
+    """
+    centres = [float(np.mean(np.nonzero(column)[0])) for column in mask.T if column.any()]
+    if len(centres) < 4:
+        return 0.0
+    ends = np.linspace(centres[0], centres[-1], len(centres))
+    return float(np.max(ends - np.array(centres)))
+
+
 def _split_fused(mask: np.ndarray, typical_width: float) -> list[tuple[int, np.ndarray]]:
     """
     Cut a component that is really two touching glyphs, at the thinnest column.
@@ -265,7 +337,11 @@ def group_runs(components: list[Component], staff: Staff) -> list[Run]:
 
 
 def flag_truncated(
-    ink_without_rules: np.ndarray, staff: Staff, runs: list[Run], components: list[Component]
+    ink_without_rules: np.ndarray,
+    staff: Staff,
+    runs: list[Run],
+    components: list[Component],
+    claimed_marks: tuple[Component, ...] | list[Component] = (),
 ) -> None:
     """
     Mark runs whose printed token runs on into a mark that was dropped.
@@ -285,7 +361,10 @@ def flag_truncated(
     if not components:
         return
     claimed = np.zeros(ink_without_rules.shape, dtype=bool)
-    for glyph in components:
+    # Technique marks count as claimed too: a slur arc or slide dash beside a
+    # run's last digit is decoration, not the remains of a dropped digit, and
+    # without this every note a mark decorates would be silenced as truncated.
+    for glyph in [*components, *claimed_marks]:
         claimed[glyph.y0 : glyph.y1, glyph.x0 : glyph.x1] = True
     leftover = (ink_without_rules.astype(bool) & ~claimed).astype(np.uint8)
 

@@ -63,6 +63,39 @@ downloader asks for the largest stream it can get.
 A wrong name becomes a wrong note everywhere that shape occurs, while an unnamed
 one is counted and reported. So nothing guesses.
 
+## Techniques have names too
+
+The video font fuses playing techniques into the printed marks, and a shape can be
+named as what it says rather than left empty:
+
+| what the shape shows                        | name it   | comes out as        |
+| ------------------------------------------- | --------- | ------------------- |
+| a small digit tight against a full one      | `4h6`     | hammer-on 4→6       |
+| two digits under one arc                     | `4p2`     | pull-off 4→2        |
+| a lone slur arc between two notes            | `~`       | hammer-on or pull-off, decided by which way the frets go |
+| an arc fused to its digit                    | `4~`/`~4` | same, joined to the next/previous note |
+| a dash after or before a number              | `12-`/`-12` | slide             |
+| a lone slide dash                            | `-`       | slide               |
+| a muted-note cross                           | `x`       | dead note           |
+
+Slur arcs and slide dashes are wide and only a few pixels tall — the opposite of a
+digit — so they are collected separately from the glyph filters, which were
+measured against fragments that cluster into phantom notes. Claiming them also
+fixes something quieter: unclaimed ink beside a number is how truncation is
+detected, so before this every note a mark decorated was silenced as incomplete —
+223 runs read as truncated on the reference clip against 195 once marks are claimed.
+
+Arcs and dashes flatten into near-identical templates and can end up in one
+cluster, so a single label can cover marks of both kinds. Either technique name
+(`~` or `-`) confirms the cluster holds technique marks; which kind each mark is
+comes from its own curve. Measured over the clip's 56 flat marks: the 11 dashes
+bow at most 0.5px, 45 of the 46 arcs bow 0.9–1.8px, and the one shallow arc at
+0.5px is misread as a slide — a decoration wobble, never a wrong note.
+
+A lone arc cannot say which way it goes. Its direction is resolved from the two
+notes it joins — rising is a hammer-on, falling a pull-off — and an arc whose
+neighbours cannot be read stays silent rather than guessing.
+
 ## Names are remembered
 
 What makes this bearable is that it does not repeat. One video is one font at one

@@ -91,6 +91,20 @@ def render_system(notes: list[tuple[int, int, str]], barlines: tuple[int, ...]) 
     return page
 
 
+def draw_arc(page: np.ndarray, string_index: int, x0: int, x1: int) -> None:
+    """A slur arc between two notes: wide, a few pixels tall, above the line."""
+    line_y = TAB_TOP + string_index * TAB_SPACING
+    cv2.ellipse(
+        page, ((x0 + x1) // 2, line_y - 8), ((x1 - x0) // 2, 3), 0, 180, 360, int(INK), 1
+    )
+
+
+def draw_dash(page: np.ndarray, string_index: int, x0: int, x1: int) -> None:
+    """A slide dash beside a note: drawn just off the line so rule removal keeps it."""
+    line_y = TAB_TOP + string_index * TAB_SPACING
+    cv2.line(page, (x0, line_y - 3), (x1, line_y - 3), int(INK), 2)
+
+
 # Notes per system. A real system of music is densely printed, and the density is
 # not cosmetic: `_held_intervals` only calls a swap when the panel changes by more
 # than compression noise, so a sparse fixture reads as one long held system. The

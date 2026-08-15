@@ -122,6 +122,64 @@ def test_naming_shapes_produces_a_score(video: Path) -> None:
     assert len(horizontals) == 6, "the six lines of the tab staff"
 
 
+def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
+    """
+    Arcs, dashes and muted notes, drawn as the video font prints them, end up in
+    the vocabulary the parser already reads: `h`, `p` and `sl.` below the staff.
+
+    This also guards the truncation fix: before flat marks were claimed, the
+    dash beside the 7 read as the remains of a dropped digit and silenced it.
+    """
+    page = fixture.render_system(
+        [(2, 300, "4"), (2, 330, "2"), (3, 500, "7"), (3, 530, "9"), (1, 700, "7"), (1, 900, "x")],
+        (20, fixture.WIDTH - 20),
+    )
+    fixture.draw_arc(page, 2, 310, 328)  # 4 to 2 falls: a pull-off
+    fixture.draw_arc(page, 3, 510, 528)  # 7 to 9 rises: a hammer-on
+    fixture.draw_dash(page, 1, 712, 724)  # slide away from the 7
+    video = fixture.write_video(tmp_path / "clip.mp4", pages=[page])
+
+    readings = pipeline.read_video(str(video))
+    assert len(readings) == 1
+    reading = readings[0]
+    shapes = pipeline.find_shapes(readings)
+
+    def line(string_index: int) -> int:
+        return fixture.TAB_TOP + string_index * fixture.TAB_SPACING
+
+    everything = list(reading.components) + [flat for _, flat in reading.flat_marks]
+
+    def name(x: int, y: int, label: str, into: dict[str, str]) -> None:
+        hits = [c for c in everything if c.x0 <= x <= c.x1 and c.y0 <= y <= c.y1]
+        assert hits, f"nothing was found where the {label!r} was drawn"
+        into[str(shapes.label_of(hits[0]))] = label
+
+    labels: dict[str, str] = {}
+    name(303, line(2), "4", labels)
+    name(333, line(2), "2", labels)
+    name(503, line(3), "7", labels)
+    name(533, line(3), "9", labels)
+    name(703, line(1), "7", labels)
+    name(903, line(1), "x", labels)
+    name(319, line(2) - 9, "~", labels)
+    name(519, line(3) - 9, "~", labels)
+    name(718, line(1) - 3, "-", labels)
+
+    pages, unspelled = pipeline.emit(readings, shapes, labels)
+    assert unspelled == 0, "the dash must not read as a truncated 7"
+    texts = [t.str for t in pages[0].texts]
+    assert texts.count("p") == 1, f"the falling arc should be one pull-off in {texts}"
+    assert texts.count("h") == 1, f"the rising arc should be one hammer-on in {texts}"
+    assert texts.count("sl.") == 1
+    assert "x" in texts
+
+    # The marks live in the band the parser reads legato marks from.
+    staff = reading.staves[0]
+    for item in pages[0].texts:
+        if item.str in ("h", "p", "sl."):
+            assert staff.bottom + staff.spacing * 0.9 <= item.y <= staff.bottom + staff.spacing * 4
+
+
 def test_shapes_left_unnamed_are_counted_not_guessed(video: Path) -> None:
     readings = pipeline.read_video(str(video))
     shapes = pipeline.find_shapes(readings)
@@ -461,6 +519,24 @@ def test_a_shape_index_that_does_not_exist_is_refused(client: TestClient) -> Non
     job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
     _await_state(client, job_id, "naming")
     answer = client.post(f"/api/extract/{job_id}/labels", json={"labels": {"9999": "7"}})
+    assert answer.status_code == 400
+
+
+def test_technique_names_are_accepted(client: TestClient) -> None:
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    naming = _await_state(client, job_id, "naming")
+    labels = {str(shape["index"]): "7" for shape in naming["shapes"]}
+    labels[next(iter(labels))] = "4h6"
+    answer = client.post(f"/api/extract/{job_id}/labels", json={"labels": labels})
+    assert answer.status_code == 200
+
+
+@pytest.mark.parametrize("bad", ["4h", "h6", "seven", "123", "12p100", "--~", "x2"])
+def test_a_name_outside_the_grammar_is_refused_not_trimmed(client: TestClient, bad: str) -> None:
+    # Trimming would turn a typo into a silently wrong note on every occurrence.
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    _await_state(client, job_id, "naming")
+    answer = client.post(f"/api/extract/{job_id}/labels", json={"labels": {"0": bad}})
     assert answer.status_code == 400
 
 

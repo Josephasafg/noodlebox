@@ -14,6 +14,7 @@ nothing available guesses well enough to be trusted with it. See
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import cv2
@@ -29,6 +30,15 @@ SCROLL_LIMIT_PX_PER_S = 2.0
 # No guitar has a 25th fret, so a token that reads as a larger number is two
 # notes whose digits were kerned tightly enough to be grouped as one.
 MAX_FRET = 24
+
+# Every name a shape may carry. Beyond fret numbers, muted notes and ghost
+# brackets, video fonts fuse techniques into single marks: a hammer-on prints as
+# a small digit against a full one ("4h6"), a pull-off as an arc over the pair
+# ("4p2", or a lone "~", or "4~"/"~4" when the arc touches its digit), and a
+# slide as a dash beside its number ("12-", "-12", or a lone "-"). The empty
+# string is a confirmed not-a-number. This is the single definition: the server
+# validates submissions against it and `emit` interprets the same grammar.
+LABEL_RE = re.compile(r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|[x()])?$")
 
 
 class ScrollingVideo(Exception):
@@ -66,14 +76,21 @@ class Reading:
         self.without_rules = staff_mod.remove_rules(self.ink, self.rules)
         self.runs: list[tuple[staff_mod.Staff, glyphs.Run]] = []
         self.components: list[glyphs.Component] = []
+        # Flat technique marks — slur arcs and slide dashes — kept apart from the
+        # glyphs so they can never join a run, but clustered and named like any
+        # other shape. What one means is decided in `emit`, from its label and
+        # the notes beside it.
+        self.flat_marks: list[tuple[staff_mod.Staff, glyphs.Component]] = []
         for one in self.staves:
             found = glyphs.components_on_staff(self.without_rules, one)
+            flats = glyphs.marks_on_staff(self.without_rules, one)
             grouped = glyphs.group_runs(found, one)
             # Marks too small to be glyphs were dropped on the way here; where one
             # sat beside a token, the token is incomplete and must not be read as
             # whatever part of it survived.
-            glyphs.flag_truncated(self.without_rules, one, grouped, found)
+            glyphs.flag_truncated(self.without_rules, one, grouped, found, flats)
             self.components.extend(found)
+            self.flat_marks.extend((one, flat) for flat in flats)
             self.runs.extend((one, run) for run in grouped)
 
     @property
@@ -185,6 +202,7 @@ def find_shapes(readings: list[Reading]) -> Shapes:
     every: list[glyphs.Component] = []
     for reading in readings:
         every.extend(reading.components)
+        every.extend(flat for _, flat in reading.flat_marks)
     return Shapes.of(every)
 
 
@@ -193,6 +211,8 @@ def _owners(readings: list[Reading]) -> dict[int, Reading]:
     for reading in readings:
         for component in reading.components:
             owner[id(component)] = reading
+        for _, flat in reading.flat_marks:
+            owner[id(flat)] = reading
     return owner
 
 
@@ -274,42 +294,204 @@ def exemplar_sheet(
     return sheet
 
 
-def _tokens(
-    run: glyphs.Run,
-    spelled: str,
-    shapes: Shapes,
-    labels: dict[str, str],
-    dx: float,
-) -> list[primitives.Text]:
+# The technique grammar of a spelled token, matching LABEL_RE's vocabulary.
+# Placement works by character proportion: "12p10" is five characters across the
+# run's box, so the "12" gets the first two fifths and the "10" the last two.
+_LEGATO_PAIR = re.compile(r"^(\d{1,2})([hp])(\d{1,2})$")
+_ARC_AFTER = re.compile(r"^(\d{1,2})~$")
+_ARC_BEFORE = re.compile(r"^~(\d{1,2})$")
+_SLIDE_AFTER = re.compile(r"^(\d{1,2})(-{1,2})$")
+_SLIDE_BEFORE = re.compile(r"^(-{1,2})(\d{1,2})$")
+_LONE_SLIDE = re.compile(r"^-{1,2}$")
+
+# How far, in staff spaces, a slur arc reaches for the notes it joins. Notes on
+# one string sit at least 2.5 glyph-heights apart (the run-joining measurement),
+# so the partner of a legato pair is closer than this and the next phrase is not.
+ARC_REACH = 2.5
+
+# Two notes are on the same string when their baselines agree to well under a
+# space; the tolerance absorbs the odd pixel of bounding-box slack.
+SAME_STRING_TOL = 0.6
+
+# Above this bow (see `glyphs._bow`) a flat mark is a slur arc; below, a slide
+# dash. The pixels decide rather than the label, because arcs and dashes
+# normalise into near-identical templates and can share one cluster — one label
+# then covers marks of both kinds, and only each mark's own curve tells them
+# apart. Measured over the reference clip's 56 flat marks: the 11 dashes bow at
+# most 0.5px while 45 of the 46 arcs bow 0.9-1.8px, with a single shallow arc at
+# 0.5 that this misreads as a slide — a decoration wobble, not a wrong note.
+ARC_MIN_BOW = 0.75
+
+
+@dataclass
+class _Note:
+    """An emitted fret token, kept so slur directions can be resolved."""
+
+    cx: float
+    baseline: float
+    fret: int | None
+    item: primitives.Text
+
+
+def _fret_of(text: str) -> int | None:
+    bare = text.strip("()")
+    return int(bare) if bare.isdigit() else None
+
+
+class _StaffTexts:
     """
-    Turn one grouped run into the text items it really represents.
+    The text items for one staff: fret tokens plus the technique marks.
 
-    Grouping happens before the characters are known, so a pair of single-digit
-    notes printed close together can arrive as one run. An impossible fret number
-    is the tell, and the fix is to hand back each character separately, letting
-    the parser place them as two onsets.
+    Techniques come out in the vocabulary the parser already reads from PDFs — an
+    `h`, `p` or `sl.` printed below the staff attaches to the note that follows
+    it — so nothing downstream needs to know videos exist. A slur arc's own label
+    cannot say which way it goes; that is resolved here by comparing the frets it
+    joins, which is why arcs wait until every note on the staff is known.
     """
 
-    def item(text: str, x0: float, x1: float, baseline: float, height: float) -> primitives.Text:
-        return primitives.Text(str=text, x=x0 + dx, y=baseline, fontSize=height, width=x1 - x0)
+    def __init__(self, staff: staff_mod.Staff, dx: float) -> None:
+        self.staff = staff
+        self.dx = dx
+        self.spacing = staff.spacing
+        # Inside the band the parser reads legato marks from: below the staff,
+        # above the lyrics.
+        self.mark_y = staff.bottom + staff.spacing * 2.0
+        self.notes: list[_Note] = []
+        self.marks: list[primitives.Text] = []
+        # Arcs whose direction is not decided yet: (anchor cx, from, to).
+        self.arcs: list[tuple[float, _Note | None, _Note | None]] = []
+        self.unread = 0
 
-    if spelled.isdigit() and int(spelled) > MAX_FRET and len(run.components) == 1:
-        # One mark that reads as an impossible fret is a pair the splitter failed
-        # to cut. Reporting nothing keeps it in the unread count, where it shows
-        # up as lost confidence rather than as a wrong note on the fretboard.
-        return []
-    if spelled.isdigit() and int(spelled) > MAX_FRET and len(run.components) > 1:
-        return [
-            item(
-                labels[str(shapes.label_of(glyph))],
-                float(glyph.x0),
-                float(glyph.x1),
-                float(glyph.y1),
-                float(glyph.height),
+    def note(self, text: str, x0: float, x1: float, baseline: float, height: float) -> _Note:
+        item = primitives.Text(str=text, x=x0 + self.dx, y=baseline, fontSize=height, width=x1 - x0)
+        made = _Note(cx=(x0 + x1) / 2, baseline=baseline, fret=_fret_of(text), item=item)
+        self.notes.append(made)
+        return made
+
+    def slide(self, cx: float) -> None:
+        # The parser attaches `sl.` to the first note right of it, so a dash
+        # trailing a note points at the note slid into, and a leading one at its
+        # own note. Both are what the dash means.
+        self.marks.append(
+            primitives.Text(
+                str="sl.", x=cx - 2 + self.dx, y=self.mark_y, fontSize=self.spacing * 0.6, width=4
             )
-            for glyph in run.components
-        ]
-    return [item(spelled, float(run.x0), float(run.x1), run.baseline, float(run.height))]
+        )
+
+    def legato(self, letter: str, cx: float) -> None:
+        self.marks.append(
+            primitives.Text(
+                str=letter, x=cx - 2 + self.dx, y=self.mark_y, fontSize=self.spacing * 0.6, width=4
+            )
+        )
+
+    def add_run(self, run: glyphs.Run, spelled: str, shapes: Shapes, labels: dict[str, str]) -> None:
+        x0, x1 = float(run.x0), float(run.x1)
+        baseline, height = run.baseline, float(run.height)
+        width = x1 - x0
+
+        def span(i: int, j: int) -> tuple[float, float]:
+            return x0 + width * i / len(spelled), x0 + width * j / len(spelled)
+
+        if spelled.isdigit() and int(spelled) > MAX_FRET:
+            if len(run.components) == 1:
+                # One mark that reads as an impossible fret is a pair the splitter
+                # failed to cut. Reporting nothing keeps it in the unread count,
+                # as lost confidence rather than a wrong note on the fretboard.
+                self.unread += 1
+                return
+            # Grouping happens before the characters are known, so a pair of
+            # single-digit notes printed close together can arrive as one run.
+            # The impossible number is the tell; each character goes back
+            # separately for the parser to place as its own onset.
+            for glyph in run.components:
+                self.note(
+                    labels[str(shapes.label_of(glyph))],
+                    float(glyph.x0),
+                    float(glyph.x1),
+                    float(glyph.y1),
+                    float(glyph.height),
+                )
+            return
+
+        if match := _LEGATO_PAIR.match(spelled):
+            frm, letter, to = match.group(1), match.group(2), match.group(3)
+            a = self.note(frm, *span(0, len(frm)), baseline, height)
+            b = self.note(to, *span(len(frm) + 1, len(spelled)), baseline, height)
+            self.legato(letter, (a.cx + b.cx) / 2)
+            return
+        if match := _ARC_AFTER.match(spelled):
+            frm = match.group(1)
+            made = self.note(frm, *span(0, len(frm)), baseline, height)
+            self.arcs.append((made.cx, made, None))
+            return
+        if match := _ARC_BEFORE.match(spelled):
+            to = match.group(1)
+            made = self.note(to, *span(1, len(spelled)), baseline, height)
+            self.arcs.append((made.cx, None, made))
+            return
+        if match := _SLIDE_AFTER.match(spelled):
+            digits = match.group(1)
+            self.note(digits, *span(0, len(digits)), baseline, height)
+            dash_from, dash_to = span(len(digits), len(spelled))
+            self.slide((dash_from + dash_to) / 2)
+            return
+        if match := _SLIDE_BEFORE.match(spelled):
+            dashes = match.group(1)
+            self.note(match.group(2), *span(len(dashes), len(spelled)), baseline, height)
+            dash_from, dash_to = span(0, len(dashes))
+            self.slide((dash_from + dash_to) / 2)
+            return
+        if _LONE_SLIDE.match(spelled):
+            self.slide((x0 + x1) / 2)
+            return
+        if spelled == "~":
+            self.arcs.append(((x0 + x1) / 2, None, None))
+            return
+        self.note(spelled, x0, x1, baseline, height)
+
+    def add_flat(self, flat: glyphs.Component, label: str) -> None:
+        # Either technique name confirms the cluster holds technique marks; each
+        # mark's own curvature then says which technique, because arcs and
+        # dashes flatten into near-identical templates and can share a cluster.
+        if label == "~" or _LONE_SLIDE.match(label):
+            if flat.bow >= ARC_MIN_BOW:
+                self.arcs.append((float(flat.cx), None, None))
+            else:
+                self.slide(float(flat.cx))
+        # Any other name on a flat mark says nothing a fret token could not, and
+        # an unnamed one is decoration; both are simply not emitted.
+
+    def _nearest(self, cx: float, direction: int, like: _Note | None) -> _Note | None:
+        """The closest note on the given side, on the same string when known."""
+        best: _Note | None = None
+        for candidate in self.notes:
+            offset = (candidate.cx - cx) * direction
+            if not 0 < offset <= self.spacing * ARC_REACH:
+                continue
+            if like is not None and abs(candidate.baseline - like.baseline) > (
+                self.spacing * SAME_STRING_TOL
+            ):
+                continue
+            if best is None or offset < (best.cx - cx) * direction:
+                best = candidate
+        return best
+
+    def resolve(self) -> list[primitives.Text]:
+        """Decide each waiting arc and return every text item for this staff."""
+        for cx, frm, to in self.arcs:
+            if frm is None:
+                frm = self._nearest(cx, -1, to)
+            if to is None:
+                to = self._nearest(cx, +1, frm)
+            if frm is None or to is None or frm.fret is None or to.fret is None:
+                continue  # not enough to say what the slur does; leave it silent
+            if abs(frm.baseline - to.baseline) > self.spacing * SAME_STRING_TOL:
+                continue  # joins nothing on one string, so it is not a slur
+            if to.fret == frm.fret:
+                continue
+            self.legato("h" if to.fret > frm.fret else "p", (frm.cx + to.cx) / 2)
+        return [note.item for note in self.notes] + self.marks
 
 
 def emit(
@@ -349,21 +531,29 @@ def emit(
             segments.append(primitives.Segment(x0=bar.x + dx, y0=bar.y0, x1=bar.x + dx, y1=bar.y1))
 
         texts: list[primitives.Text] = []
-        for _, run in reading.runs:
-            if run.truncated:
-                # Part of this number was never captured, so any reading of it
-                # would be a wrong note rather than a gap.
-                unspelled += 1
-                continue
-            spelled = glyphs.spell(run, shapes.assignment, shapes.index_of, labels)
-            if spelled is None:
-                unspelled += 1
-                continue
-            tokens = _tokens(run, spelled, shapes, labels, dx)
-            if not tokens:
-                unspelled += 1
-                continue
-            texts.extend(tokens)
+        for one in reading.staves:
+            emitter = _StaffTexts(one, dx)
+            for staff_of_run, run in reading.runs:
+                if staff_of_run is not one:
+                    continue
+                if run.truncated:
+                    # Part of this number was never captured, so any reading of
+                    # it would be a wrong note rather than a gap.
+                    unspelled += 1
+                    continue
+                spelled = glyphs.spell(run, shapes.assignment, shapes.index_of, labels)
+                if spelled is None:
+                    unspelled += 1
+                    continue
+                emitter.add_run(run, spelled, shapes, labels)
+            for staff_of_flat, flat in reading.flat_marks:
+                if staff_of_flat is not one:
+                    continue
+                label = labels.get(str(shapes.label_of(flat)))
+                if label:
+                    emitter.add_flat(flat, label)
+            unspelled += emitter.unread
+            texts.extend(emitter.resolve())
         pages.append(
             primitives.PagePrimitives(
                 pageIndex=reading.page.index,

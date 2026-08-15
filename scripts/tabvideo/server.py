@@ -360,8 +360,12 @@ def name_shapes(job_id: str, request: LabelsRequest) -> dict[str, Any]:
     for key, value in request.labels.items():
         if not key.isdigit() or not 0 <= int(key) < count:
             raise HTTPException(status_code=400, detail=f"There is no shape {key}.")
-        # A fret number is at most two characters; anything longer is not a name.
-        cleaned[str(int(key))] = value[:2]
+        name = value.strip().lower()
+        if len(name) > 5 or not pipeline.LABEL_RE.match(name):
+            # Refused rather than trimmed: a silently altered name would become
+            # a silently wrong note everywhere that shape occurs.
+            raise HTTPException(status_code=400, detail=f"{value!r} is not a name a shape can have.")
+        cleaned[str(int(key))] = name
     with job.lock:
         if job.state == "done":
             raise HTTPException(status_code=409, detail="That job has already been built.")

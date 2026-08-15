@@ -316,10 +316,10 @@ def _tab_staff() -> staff_mod.Staff:
     return staff_mod.Staff(lines=[100.0 + 20 * i for i in range(6)], x0=0.0, x1=800.0)
 
 
-def _mark(x0: int, x1: int, cy: int, height: int = 9) -> glyphs.Component:
+def _mark(x0: int, x1: int, cy: int, height: int = 9, bow: float = 0.0) -> glyphs.Component:
     template = np.zeros((glyphs.TEMPLATE_SIZE, glyphs.TEMPLATE_SIZE), dtype=np.float32)
     return glyphs.Component(x0=x0, y0=cy - height // 2, x1=x1, y1=cy - height // 2 + height,
-                            template=template)
+                            template=template, bow=bow)
 
 
 def test_the_digits_of_a_two_digit_fret_are_read_as_one_number() -> None:
@@ -418,24 +418,172 @@ def test_digits_on_different_strings_never_join() -> None:
     assert len(runs) == 2
 
 
+def _emit_one(spelled: str, labels: list[str]) -> tuple[list, "pipeline._StaffTexts"]:
+    """Run one spelled token through a staff emitter, returning its texts."""
+    run = _run_of(labels)
+    shapes = _shapes(run.components, list(range(len(labels))))
+    emitter = pipeline._StaffTexts(_tab_staff(), 0.0)
+    emitter.add_run(run, spelled, shapes, {str(i): value for i, value in enumerate(labels)})
+    return emitter.resolve(), emitter
+
+
 def test_an_impossible_fret_from_one_mark_is_dropped() -> None:
-    run = _run_of(["79"])
-    shapes = _shapes(run.components, [0])
-    assert pipeline._tokens(run, "79", shapes, {"0": "79"}, 0.0) == []
+    texts, emitter = _emit_one("79", ["79"])
+    assert texts == []
+    assert emitter.unread == 1
 
 
 def test_an_impossible_fret_from_two_marks_becomes_two_notes() -> None:
-    run = _run_of(["7", "9"])
-    shapes = _shapes(run.components, [0, 1])
-    tokens = pipeline._tokens(run, "79", shapes, {"0": "7", "1": "9"}, 0.0)
-    assert [token.str for token in tokens] == ["7", "9"]
+    texts, _ = _emit_one("79", ["7", "9"])
+    assert [token.str for token in texts] == ["7", "9"]
 
 
 def test_a_reachable_two_digit_fret_survives() -> None:
-    run = _run_of(["1", "2"])
-    shapes = _shapes(run.components, [0, 1])
-    tokens = pipeline._tokens(run, "12", shapes, {"0": "1", "1": "2"}, 0.0)
-    assert [token.str for token in tokens] == ["12"]
+    texts, _ = _emit_one("12", ["1", "2"])
+    assert [token.str for token in texts] == ["12"]
+
+
+# --- technique marks -------------------------------------------------------
+#
+# The video font fuses techniques into the tokens themselves — a hammer-on is a
+# small digit against a full one, a pull-off an arc over the pair, a slide a dash
+# beside its number. The emitter turns those labels into the below-staff `h`,
+# `p` and `sl.` vocabulary the parser already reads from PDFs.
+
+
+def _below_staff(item, staff) -> bool:
+    return staff.bottom + staff.spacing * 0.9 <= item.y <= staff.bottom + staff.spacing * 4
+
+
+def test_a_fused_hammer_pair_becomes_two_notes_and_a_mark() -> None:
+    staff = _tab_staff()
+    # As wide as a real fused pair: two digits and the join, about a staff space.
+    fused = _mark(100, 121, int(staff.lines[2]))
+    shapes = _shapes([fused], [0])
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([fused]), "4h6", shapes, {"0": "4h6"})
+    texts = emitter.resolve()
+    notes = [t for t in texts if t.str.isdigit()]
+    marks = [t for t in texts if not t.str.isdigit()]
+    assert [n.str for n in notes] == ["4", "6"]
+    assert [m.str for m in marks] == ["h"]
+    assert _below_staff(marks[0], staff)
+    # The mark sits between the notes it joins, which is how the parser knows
+    # the second note is the one hammered onto.
+    left, right = (n.x + n.width / 2 for n in notes)
+    mark_cx = marks[0].x + marks[0].width / 2
+    assert left < mark_cx < right
+    # The two onsets must not merge back into a chord.
+    assert right - left > staff.spacing * 0.3
+
+
+def test_a_fused_pull_pair_keeps_its_two_digit_frets() -> None:
+    texts, _ = _emit_one("12p10", ["12p10"])
+    assert [t.str for t in texts] == ["12", "10", "p"]
+
+
+def test_a_trailing_dash_is_a_slide_after_its_number() -> None:
+    texts, _ = _emit_one("12-", ["12-"])
+    assert [t.str for t in texts] == ["12", "sl."]
+    note, slide = texts
+    assert slide.x + slide.width / 2 > note.x + note.width / 2
+
+
+def test_a_leading_dash_is_a_slide_into_its_number() -> None:
+    texts, _ = _emit_one("-12", ["-12"])
+    assert [t.str for t in texts] == ["12", "sl."]
+    note, slide = texts
+    assert slide.x + slide.width / 2 < note.x + note.width / 2
+
+
+def _pair_with_arc(left: str, right: str) -> list:
+    """Two notes on one string with a lone slur arc between them."""
+    staff = _tab_staff()
+    a = _mark(100, 107, int(staff.lines[2]))
+    b = _mark(130, 137, int(staff.lines[2]))
+    arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
+    shapes = _shapes([a, b, arc], [0, 1, 2])
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([a]), left, shapes, {"0": left, "1": right, "2": "~"})
+    emitter.add_run(glyphs.Run([b]), right, shapes, {"0": left, "1": right, "2": "~"})
+    emitter.add_flat(arc, "~")
+    return emitter.resolve()
+
+
+def test_an_arc_over_a_rising_pair_is_a_hammer_on() -> None:
+    texts = _pair_with_arc("7", "9")
+    assert [t.str for t in texts] == ["7", "9", "h"]
+
+
+def test_an_arc_over_a_falling_pair_is_a_pull_off() -> None:
+    texts = _pair_with_arc("4", "2")
+    assert [t.str for t in texts] == ["4", "2", "p"]
+
+
+def test_an_arc_with_nothing_beside_it_stays_silent() -> None:
+    staff = _tab_staff()
+    arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_flat(arc, "~")
+    assert emitter.resolve() == []
+
+
+def test_an_arc_between_different_strings_is_not_a_slur() -> None:
+    staff = _tab_staff()
+    a = _mark(100, 107, int(staff.lines[2]))
+    b = _mark(130, 137, int(staff.lines[3]))
+    arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
+    shapes = _shapes([a, b, arc], [0, 1, 2])
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([a]), "7", shapes, {"0": "7", "1": "9", "2": "~"})
+    emitter.add_run(glyphs.Run([b]), "9", shapes, {"0": "7", "1": "9", "2": "~"})
+    emitter.add_flat(arc, "~")
+    assert [t.str for t in emitter.resolve()] == ["7", "9"]
+
+
+def test_an_arc_fused_to_its_digit_resolves_against_the_next_note() -> None:
+    staff = _tab_staff()
+    a = _mark(100, 112, int(staff.lines[2]))
+    b = _mark(130, 137, int(staff.lines[2]))
+    shapes = _shapes([a, b], [0, 1])
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([a]), "4~", shapes, {"0": "4~", "1": "2"})
+    emitter.add_run(glyphs.Run([b]), "2", shapes, {"0": "4~", "1": "2"})
+    assert [t.str for t in emitter.resolve()] == ["4", "2", "p"]
+
+
+def test_a_lone_dash_shape_is_a_slide_mark() -> None:
+    staff = _tab_staff()
+    dash = _mark(110, 124, int(staff.lines[2]), height=2)
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_flat(dash, "-")
+    texts = emitter.resolve()
+    assert [t.str for t in texts] == ["sl."]
+    assert _below_staff(texts[0], staff)
+
+
+def test_a_flat_marks_own_curve_outranks_its_label() -> None:
+    """
+    Arcs and dashes flatten into near-identical templates and can share one
+    cluster, so a single label covers marks of both kinds. Each mark's own bow
+    is the only per-occurrence truth, and it is what decides.
+    """
+    staff = _tab_staff()
+    a = _mark(100, 107, int(staff.lines[2]))
+    b = _mark(130, 137, int(staff.lines[2]))
+    shapes = _shapes([a, b], [0, 1])
+
+    # Bowed but labelled as a dash: still a slur.
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([a]), "7", shapes, {"0": "7", "1": "9"})
+    emitter.add_run(glyphs.Run([b]), "9", shapes, {"0": "7", "1": "9"})
+    emitter.add_flat(_mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5), "-")
+    assert [t.str for t in emitter.resolve()] == ["7", "9", "h"]
+
+    # Straight but labelled as an arc: still a slide.
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_flat(_mark(110, 126, int(staff.lines[2]) - 8, height=2), "~")
+    assert [t.str for t in emitter.resolve()] == ["sl."]
 
 
 def test_an_unlabelled_shape_makes_the_whole_number_unread() -> None:
