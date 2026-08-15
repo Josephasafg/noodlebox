@@ -421,6 +421,15 @@ class _StaffTexts:
                 # as lost confidence rather than a wrong note on the fretboard.
                 self.unread += 1
                 return
+            if len(run.components) > 2:
+                # Three or more digits are at least two numbers, and nothing here
+                # says where one ends. "911" is a fret 9 then a fret 11, printed
+                # with the 9 closer to the 1 than the two 1s are to each other, so
+                # the gaps do not answer it either. Splitting per character would
+                # spell it 9, 1, 1 — one right note and two invented ones — so it
+                # is reported unread instead.
+                self.unread += 1
+                return
             # Grouping happens before the characters are known, so a pair of
             # single-digit notes printed close together can arrive as one run.
             # The impossible number is the tell; each character goes back

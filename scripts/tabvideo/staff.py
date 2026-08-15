@@ -14,17 +14,37 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-# Ink threshold as a fraction of the page's dynamic range. Engraved notation is
-# near-black on near-white, so anything in the middle is an antialiased edge.
-INK_LEVEL = 0.55
+# Both thresholds are measured down from the paper, not across the page's
+# dynamic range. What is on the page besides the engraving varies — a logo, a
+# title card, the black of the camera footage — and none of it says anything
+# about how dark the notation is.
+PAPER_PERCENTILE = 95
 
 # Engravers draw staff lines far lighter than the notes on them — measured at
-# grey 225 against paper 253 in the reference video, where glyphs are near black.
-# So rules need their own, much more permissive threshold: anything detectably
-# below the paper. Measured safe window is 5%–8% of the paper level; outside it
-# the lines either dissolve or the paper's own noise starts to register.
-PAPER_PERCENTILE = 95
+# grey 221-233 against paper 253 in the reference video. So rules get a much
+# more permissive threshold: anything detectably below the paper. Measured safe
+# window is 5%-8% of the paper level; outside it the lines either dissolve or
+# the paper's own noise starts to register.
 RULE_DELTA_FRACTION = 0.07
+
+# Ink is what a note is drawn with. A fret number is engraved at around ten
+# pixels and antialiased, so most of its body sits in the midtones: on the
+# reference video a digit's core reads near 100 but the pixels holding it
+# together run to 200.
+#
+# This was measured against the page's dynamic range before, which is what made
+# the reader miss notes. `page.min()` is pinned to 0 by whatever else shares the
+# panel, so the threshold sat at a fixed 140 — below the body of every digit,
+# keeping only its darkest specks. A `0` on the low E came back as two 1px walls
+# and two 1px arcs, none of them glyph-shaped, and the note simply vanished.
+# Across the reference video that dropped 40% of all marks and turned 43 real
+# shapes into 126 clusters, most of them debris.
+#
+# The window is wide: every threshold from 160 to 200 reads the reference video
+# identically. It is bounded below by the digit's own body and above by the
+# staff lines, which must stay out of this mask or the numbers on a line come
+# back strung together through it. This sits in the middle.
+INK_DELTA_FRACTION = 0.27
 
 # A staff line runs the width of its system. Shorter rules — ties, slide marks,
 # the beams under the notation staff — must not be mistaken for one.
@@ -109,10 +129,8 @@ def to_ink(page: np.ndarray) -> np.ndarray:
     staff lines, which keeps the numbers on a string from being strung together
     into one component by the line they sit on.
     """
-    lo, hi = float(page.min()), float(page.max())
-    if hi - lo < 1e-6:
-        return np.zeros_like(page, dtype=bool)
-    return page < (lo + (hi - lo) * INK_LEVEL)
+    white = float(np.percentile(page, PAPER_PERCENTILE))
+    return page < white - white * INK_DELTA_FRACTION
 
 
 def marks(page: np.ndarray) -> np.ndarray:

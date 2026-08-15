@@ -3,9 +3,11 @@ Tests for the video tab reader.
 
 Everything here works on synthetically engraved systems rather than a real video,
 which keeps the suite deterministic and free of committed copyrighted material.
-The renderer imitates the two properties of real engraving that the pipeline
-actually depends on: staff lines drawn much lighter than the notes, and fret
-numbers centred on their line.
+The renderer imitates the properties of real engraving that the pipeline actually
+depends on: staff lines drawn much lighter than the notes, and fret numbers
+centred on their line. It draws those numbers solid for legibility, which is not
+how a video prints them — see `print_hairline_zero` for the faithful version, and
+the bug that only it catches.
 
     python3 -m pytest scripts/tabvideo/tests
 """
@@ -33,6 +35,10 @@ def _shapes(components: list[glyphs.Component], assignment: list[int]) -> pipeli
 PAPER = 253
 RULE_GREY = 225
 INK = 20
+
+# What a fret number is really printed in: grey, not the near-black `INK` most of
+# this suite draws with. See `print_hairline_zero`.
+GLYPH_GREY = 95
 
 TAB_TOP = 150
 SPACING = 20
@@ -100,6 +106,84 @@ def test_pale_rules_reach_the_marks_mask_but_not_the_ink_mask() -> None:
     row = TAB_TOP + 2 * SPACING
     assert marks[row, 300], "a pale staff line must register as a mark"
     assert not ink[row, 300], "a pale staff line must not register as note ink"
+
+
+def print_hairline_zero(page: np.ndarray, string_index: int, x: int) -> None:
+    """
+    Print an open-string `0` the way the reference video really prints one.
+
+    The rest of this suite draws its notes solid and near-black, which is what
+    let a real bug through. A fret number in a 1080p video is about ten pixels
+    tall and its stroke is *thinner than one pixel*, so almost none of the digit
+    is the ink's own grey: it is the midtones between that and the paper, and
+    they vary around the ring. Only where the stroke runs along the pixel grid
+    does it darken to near its printed value.
+
+    Drawn oversized with a sub-pixel stroke and scaled down, which is how the
+    video makes it.
+    """
+    supersample = 4
+    radius_x, radius_y = 4, 6
+    pad = 6
+    size = ((radius_y + pad) * 2 * supersample, (radius_x + pad) * 2 * supersample)
+    patch = np.full(size, PAPER, dtype=np.uint8)
+    cv2.ellipse(
+        patch,
+        ((pad + radius_x) * supersample, (pad + radius_y) * supersample),
+        (radius_x * supersample, radius_y * supersample),
+        0,
+        0,
+        360,
+        GLYPH_GREY,
+        max(1, int(supersample * 0.55)),
+        cv2.LINE_AA,
+    )
+    small = cv2.resize(
+        patch,
+        (patch.shape[1] // supersample, patch.shape[0] // supersample),
+        interpolation=cv2.INTER_AREA,
+    )
+    line_y = TAB_TOP + string_index * SPACING
+    top = line_y - small.shape[0] // 2
+    page[line_y, x - 2 : x + small.shape[1] + 2] = PAPER  # the line breaks behind the number
+    window = page[top : top + small.shape[0], x : x + small.shape[1]]
+    np.minimum(window, small, out=window)
+
+
+def test_a_hairline_digit_is_mostly_midtones() -> None:
+    """Say what the fixture above imitates, so it cannot quietly drift solid."""
+    page = render_system([])
+    print_hairline_zero(page, 5, 300)
+    printed = page[TAB_TOP + 5 * SPACING - 9 : TAB_TOP + 5 * SPACING + 9, 298:314]
+    body = printed[printed < PAPER - 15]
+
+    assert body.min() < 140, "part of the stroke darkens to near its printed grey"
+    assert np.median(body) > 150, "but most of the digit is lighter than that"
+
+
+def test_a_hairline_digit_is_read_whole_beside_darker_ink_elsewhere() -> None:
+    """
+    A grey digit has to come back as one mark, whatever else is on the panel.
+
+    This is the bug that made the reader miss notes. The ink threshold was a
+    fraction of the page's *dynamic range*, so anything truly black elsewhere on
+    the panel — a logo, a title card, the camera — dragged it down onto the
+    engraving itself and kept only each digit's darkest specks. A `0` on the low
+    E came back as two one-pixel walls and two one-pixel arcs, none of them
+    glyph-shaped, so the note was not read at all.
+    """
+    page = render_system([])
+    print_hairline_zero(page, 5, 300)
+    page[0:12, 0:80] = 0  # something black elsewhere on the panel
+
+    rules = staff_mod.find_rules(staff_mod.marks(page))
+    tab = staff_mod.find_staves(rules, 6)[0]
+    found = glyphs.components_on_staff(staff_mod.remove_rules(staff_mod.to_ink(page), rules), tab)
+
+    assert len(found) == 1, "a printed digit is one mark, not a handful of fragments"
+    assert found[0].height >= SPACING * 0.45, "and it keeps the height it was printed at"
+    assert found[0].width >= SPACING * 0.3
+    assert abs(found[0].cy - (TAB_TOP + 5 * SPACING)) < SPACING * 0.5
 
 
 def test_finds_the_tab_staff_with_its_spacing() -> None:
@@ -441,6 +525,19 @@ def test_an_impossible_fret_from_two_marks_becomes_two_notes() -> None:
 def test_a_reachable_two_digit_fret_survives() -> None:
     texts, _ = _emit_one("12", ["1", "2"])
     assert [token.str for token in texts] == ["12"]
+
+
+def test_three_digits_in_one_run_are_reported_rather_than_split() -> None:
+    """
+    `911` is a fret 9 then a fret 11, and nothing in the run says where to cut.
+
+    On the reference clip the 9 sits closer to the first 1 than the two 1s sit to
+    each other, so spacing cannot answer it. Reading it per character would give
+    9, 1, 1 — one right note and two invented ones.
+    """
+    texts, emitter = _emit_one("911", ["9", "1", "1"])
+    assert [token.str for token in texts] == []
+    assert emitter.unread == 1
 
 
 # --- technique marks -------------------------------------------------------

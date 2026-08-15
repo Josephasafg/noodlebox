@@ -68,14 +68,18 @@ BAND_MARGIN = 0.8
 # Two glyphs join into one number when the gap between them is under this
 # fraction of the font's height. The digits of a two-digit fret sit close together
 # while separate notes on one string are a note-spacing apart, so the two
-# populations are far apart — measured over 439 same-line pairs in the reference
-# video, gap/height was at most 0.67 within a number and at least 2.50 between
-# notes, with almost nothing in between. This sits in that dead zone.
+# populations are far apart — measured over 2193 same-line pairs in the reference
+# video, gap/height runs 0.0-0.7 within a number and 1.4 upwards between notes,
+# with four pairs in the whole clip in between. This sits in that dead zone.
 #
-# It was 0.45 before, which joined only gaps under about four pixels and so left
-# half of all two-digit frets split in two. That is worse than it sounds: a split
-# "12" is not an unread mark but two confident wrong notes, fret 1 and fret 2.
-JOIN_GAP_FRACTION = 1.5
+# Both of this constant's earlier values were measured against a broken glyph
+# mask, which is what made them wrong. At 0.45 it joined only gaps under about
+# four pixels and left half of all two-digit frets split into two confident wrong
+# notes. At 1.5 it did the opposite: whole glyphs are taller than the fragments it
+# was measured on, so the same physical gap became a *smaller* fraction of the
+# font height, and 1.5 landed inside the between-notes population — joining `9`
+# and `11` into "911", then spelling it out per character as three notes.
+JOIN_GAP_FRACTION = 1.0
 
 # Clustering canvas. Small enough that antialiasing differences wash out, large
 # enough to keep 6 apart from 8.

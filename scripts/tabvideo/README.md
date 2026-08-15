@@ -159,18 +159,22 @@ work without either, which is what you want when checking recognition itself.
 
 Shapes are listed commonest first, and the first pass prints how much of the
 notation each prefix accounts for, so you can stop when the rest stops mattering.
-On a four-minute reference video — 29 systems, 1732 marks, 145 shapes — the curve
-was:
+On a four-minute reference video — 29 systems, 2402 marks — the whole clip comes
+to 43 shapes, and the curve is steep:
 
 | shapes named | marks covered |
 | ------------ | ------------- |
-| 10           | 65%           |
-| 20           | 78%           |
-| 40           | 88%           |
-| 60           | 93%           |
+| 10           | 90%           |
+| 20           | 96%           |
+| 38           | 99.7%         |
 
-The long tail is one-off shapes — a digit fused to a slide line, a piece of a
-slur — so the last few percent cost far more effort than they return.
+The tail is a handful of one-off shapes: a pair of digits kerned tightly enough
+to arrive as one mark, a piece of a slide line.
+
+This used to read 145 shapes for 1732 marks, with 40 names needed to reach 88%.
+Almost all of that difference was debris rather than notation — see the ink
+threshold in `staff.py`, which was set dark enough to break digits into pieces,
+each piece then clustering as a shape of its own.
 
 ### Incomplete numbers are reported, not half-read
 
@@ -182,10 +186,54 @@ read, which no guitar part does.
 
 So a token with leftover ink beside it — the size of a dropped digit, at the
 token's own height — is reported unread instead. Reading fewer notes is the point:
-a gap is recoverable and a wrong note is not. On the reference video this moved 223
-tokens from confidently wrong to admitted gaps, and fret 1 fell from 21% of notes
-to 4%. A remaining spike at fret 1 or 2 in some other video is still worth
-treating as this problem rather than as the music.
+a gap is recoverable and a wrong note is not.
+
+Most of what this used to catch was a symptom of the ink threshold below, and no
+run on the reference clip is truncated now that digits arrive whole. The guard
+stays because a genuinely dropped units digit is still possible in a smaller
+engraving, and because it costs nothing when there is nothing to catch. A spike
+at fret 1 in some other video is still worth treating as this problem rather
+than as the music.
+
+### Ink is measured down from the paper, not across the page
+
+A fret number is engraved grey, not black, and at ten pixels almost none of it is
+the ink's own value: the digit is held together by the midtones between the ink
+and the paper.
+
+The threshold for that was a fraction of the page's *dynamic range*, which is the
+one thing on the panel that says nothing about the notation. Anything truly black
+sharing the frame — a logo, a title card, the camera itself — pinned it to a
+constant 140, below the body of every digit. What survived was each digit's
+darkest specks: an open `0` came back as two one-pixel walls and two one-pixel
+arcs, none of them glyph-shaped, so the note was not read at all. Measured over
+the reference clip, that lost 40% of every mark on the page and more than half the
+notes, and open strings almost entirely — one fret-0 note in four minutes.
+
+It is measured down from the paper now, like the rule threshold. The window is
+wide: every value from 160 to 200 reads the reference clip identically, bounded
+below by the digit's body and above by the staff lines, which have to stay out of
+this mask. Nothing else changed, and the read went from 801 notes to 1928.
+
+### Every threshold measured downstream of it had to be re-measured
+
+Whole glyphs are bigger than the fragments they used to arrive as, and several
+constants here are ratios against glyph size, so the fix moved their inputs.
+Both of the ones that matter had drifted onto the wrong side of their own
+measurement:
+
+- `JOIN_GAP_FRACTION` decides where one printed number ends. The gap between two
+  notes did not change, but the font height it is divided by grew, so the
+  between-notes population fell from "2.50 and up" to "1.4 and up" — and the
+  threshold of 1.5 was suddenly inside it. `9` and `11` were being joined into
+  "911" and then spelled out per character as three notes. Re-measured over 2193
+  same-line pairs the valley is 0.8-1.3, so it is 1.0.
+- Three or more digits in one run are at least two numbers, and where to cut is
+  not recoverable — on this clip the `9` sits closer to the `11` than the two
+  `1`s sit to each other. Those runs are reported unread rather than split.
+
+Fret 1 was 4.1% of every note read before any of this, which no guitar part does;
+it is 0.3% now. Almost all of it was invented by the two mechanisms above.
 
 ## How it works
 
@@ -223,11 +271,25 @@ the only implementation of what a tab means.
 - **Articulations attached to a digit** — a slide line, a tie — can make it a
   separate shape from the same digit printed clean, so expect a few extra
   clusters to label.
+- **Two digits printed touching cannot always be told from one number.** `56` is
+  impossible as a fret and comes back as two notes; `17` is a reachable fret and
+  comes back as one. Nothing in the spacing separates them — measured on the
+  reference clip, the pairs read as `24` are kerned exactly like the ones read as
+  `12`. A part that lives high on the neck is where this would show.
 - **Repeats, D.C. and multi-voice parts** are not interpreted; systems are read
   in the order they appear.
 
 Check the output before trusting it. `parseScore` reports `unreadCount`, and a
 number well above zero means shapes were left unlabelled or a pass went wrong.
+
+A zero, though, proves nothing. `unreadCount` counts tokens the reader *found*
+and could not name; it cannot count a note that never reached it. While the ink
+threshold was breaking digits into pieces the reference clip reported an
+`unreadCount` of 0 and was missing 60% of its notes. The count that catches that
+is how many marks came off the page at all, against how many shapes they cluster
+into: notation that reads cleanly gives a few dozen shapes covering nearly every
+mark, and a long tail of one-off shapes means something upstream is producing
+debris.
 
 ## What reaches the parser
 
