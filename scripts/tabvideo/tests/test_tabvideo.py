@@ -843,6 +843,29 @@ def test_an_arc_over_a_pair_the_run_already_joined_does_not_say_it_twice() -> No
     assert [t.str for t in emitter.resolve()] == ["7", "9", "h"]
 
 
+def test_an_arc_joins_the_string_it_is_drawn_over_not_the_nearest_number() -> None:
+    """
+    An arc is printed over the string it belongs to, and its height is the only
+    thing that says which string that is. Reaching for the nearest number in x
+    instead picks one on another string as soon as two strings are played in
+    parallel — which this notation does constantly — and the search for its
+    partner then runs along the wrong line and comes back with nothing.
+    """
+    staff = _tab_staff()
+    a = _mark(100, 107, int(staff.lines[2]))
+    b = _mark(130, 137, int(staff.lines[2]))
+    # Sitting under the arc's left end, so it is nearer in x than the 4 is.
+    beside = _mark(108, 115, int(staff.lines[3]))
+    arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([a]), "4")
+    emitter.add_run(glyphs.Run([b]), "2")
+    emitter.add_run(glyphs.Run([beside]), "9")
+    emitter.add_flat(arc, "~")
+    assert [t.str for t in emitter.resolve()] == ["4", "2", "9", "p"]
+    assert emitter.unattached == 0
+
+
 def test_an_arc_between_different_strings_is_not_a_slur() -> None:
     staff = _tab_staff()
     a = _mark(100, 107, int(staff.lines[2]))

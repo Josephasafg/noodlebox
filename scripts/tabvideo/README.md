@@ -195,6 +195,16 @@ notes it joins — rising is a hammer-on, falling a pull-off — and an arc whos
 neighbours cannot be read is counted rather than dropped, because that count is
 the only thing that can say articulation went missing.
 
+Which two notes those are is decided by the arc's *height*. An arc is printed
+over the string it belongs to, and nothing else says which string that is:
+reaching left and right for the nearest number picks one on another string as
+soon as two strings are played in parallel, which this notation does constantly,
+and the search for its partner then runs along the wrong line and comes back
+empty. Measured over the clip's 46 arcs, 41 of the 43 that have a same-string
+pair beneath them sit 0.41–0.57 staff spaces above its baseline, in one tight
+band. Choosing the string by height agrees with the old rule on every arc it
+settled (34) and settles 8 more, leaving 3 genuinely unattached.
+
 ### Most legato figures have no arc at all
 
 The bigger source of hammer-ons is not the arcs, it is the numbers. A legato pair
@@ -468,6 +478,24 @@ staff's first line, hiding the staff altogether.
 The cost is that the notation staff is not emitted, so the parser cannot pair one
 with a tab staff. Nothing here needs it: barlines are emitted directly, and bend
 marks are read from a band measured off the tab staff.
+
+### A legato mark cannot say which string it is on
+
+Hammer-ons, pull-offs and slides reach the parser as the letters engravers print
+below the staff — `h`, `p`, `sl.` — which is what a tab PDF looks like, so nothing
+downstream has to know videos exist. The price is that the band below the staff
+belongs to all six strings at once. This reader knows exactly which string a
+legato figure is on, having read it off one, and the format has nowhere to put it.
+
+The parser recovers it by asking what could actually be played: a mark goes to
+the notes in its column whose string sounded a fret it can move from, in the
+direction the symbol means. Usually exactly one qualifies; where a chord really
+is slurred together, several do; where none does, the mark is dropped. Handing it
+to the whole column instead — which is what happened before — turned a chord
+whose top string hammers 5 to 7 into `5h7657` where the music reads `7655h7`, and
+left stray `h`s hanging off strings that had sounded nothing to lead out of. On
+the reference clip it printed 285 legato symbols, 9 of them attached to nothing;
+asking what is playable prints 181, none of them stranded.
 
 ## Copyright
 

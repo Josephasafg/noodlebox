@@ -611,6 +611,18 @@ ARC_REACH = 2.5
 # space; the tolerance absorbs the odd pixel of bounding-box slack.
 SAME_STRING_TOL = 0.6
 
+# How far above its notes' baseline the underside of a slur arc is drawn, in
+# staff spaces. An arc is printed over the string it belongs to, so its own
+# height says which string that is — and that is the only thing that does.
+# Reaching left and right for the nearest note instead picks whatever is closest
+# in x, which on this notation is regularly a note on another string: two strings
+# played in parallel put their numbers at the same x, and then the arc binds to
+# the wrong one and finds no partner. Measured over the reference clip's 46 arcs,
+# 41 of the 43 that have a same-string pair beneath them sit 0.41-0.57 spaces
+# above it, in one tight band. Choosing the string by height first agrees with
+# the old rule everywhere it decided anything (34 arcs) and settles 8 more.
+ARC_LIFT = 0.5
+
 
 def _readings_of(digits: str) -> list[list[str]]:
     """Every way a string of digits divides into playable frets."""
@@ -742,8 +754,10 @@ class _StaffTexts:
         self.mark_y = staff.bottom + staff.spacing * 2.0
         self.notes: list[_Note] = []
         self.marks: list[primitives.Text] = []
-        # Arcs whose direction is not decided yet: (anchor cx, from, to).
-        self.arcs: list[tuple[float, _Note | None, _Note | None]] = []
+        # Arcs whose direction is not decided yet, as (anchor cx, the baseline
+        # the arc is drawn over, from, to). The baseline is what says which
+        # string an arc with no note of its own belongs to.
+        self.arcs: list[tuple[float, float, _Note | None, _Note | None]] = []
         # Pairs a tightly printed run already joined, so an arc over the same two
         # notes does not print a second `h`.
         self.joined: list[tuple[_Note, _Note]] = []
@@ -839,12 +853,12 @@ class _StaffTexts:
         if match := _ARC_AFTER.match(spelled):
             frm = match.group(1)
             made = self.note(frm, *span(0, len(frm)), baseline, height)
-            self.arcs.append((made.cx, made, None))
+            self.arcs.append((made.cx, made.baseline, made, None))
             return
         if match := _ARC_BEFORE.match(spelled):
             to = match.group(1)
             made = self.note(to, *span(1, len(spelled)), baseline, height)
-            self.arcs.append((made.cx, None, made))
+            self.arcs.append((made.cx, made.baseline, None, made))
             return
         if match := _SLIDE_AFTER.match(spelled):
             digits = match.group(1)
@@ -878,7 +892,7 @@ class _StaffTexts:
             self.slide((x0 + x1) / 2)
             return
         if spelled == "~":
-            self.arcs.append(((x0 + x1) / 2, None, None))
+            self.arcs.append(((x0 + x1) / 2, baseline + self.spacing * ARC_LIFT, None, None))
             return
         self.note(spelled, x0, x1, baseline, height)
 
@@ -900,7 +914,9 @@ class _StaffTexts:
         # dashes flatten into near-identical templates and can share a cluster.
         if label == "~" or _LONE_SLIDE.match(label):
             if flat.bow >= ARC_MIN_BOW:
-                self.arcs.append((float(flat.cx), None, None))
+                self.arcs.append(
+                    (float(flat.cx), float(flat.y1) + self.spacing * ARC_LIFT, None, None)
+                )
             else:
                 self.slide(float(flat.cx))
             return
@@ -910,28 +926,42 @@ class _StaffTexts:
         # with it and leave the totals looking untroubled.
         self.ignored += 1
 
-    def _nearest(self, cx: float, direction: int, like: _Note | None) -> _Note | None:
-        """The closest note on the given side, on the same string when known."""
+    def _nearest(self, cx: float, direction: int, on: float | None) -> _Note | None:
+        """The closest note on the given side, on the given string when known."""
         best: _Note | None = None
         for candidate in self.notes:
             offset = (candidate.cx - cx) * direction
             if not 0 < offset <= self.spacing * ARC_REACH:
                 continue
-            if like is not None and abs(candidate.baseline - like.baseline) > (
-                self.spacing * SAME_STRING_TOL
-            ):
+            if on is not None and abs(candidate.baseline - on) > self.spacing * SAME_STRING_TOL:
                 continue
             if best is None or offset < (best.cx - cx) * direction:
                 best = candidate
         return best
 
+    def _string_at(self, baseline: float) -> float | None:
+        """The baseline of the string a mark drawn at this height sits over."""
+        near = [
+            note.baseline
+            for note in self.notes
+            if abs(note.baseline - baseline) <= self.spacing * SAME_STRING_TOL
+        ]
+        return min(near, key=lambda b: abs(b - baseline)) if near else None
+
     def resolve(self) -> list[primitives.Text]:
         """Decide each waiting arc and return every text item for this staff."""
-        for cx, frm, to in self.arcs:
+        for cx, over, frm, to in self.arcs:
+            # Which string the arc is drawn over decides which notes it can be
+            # joining. Reaching for the nearest number in x instead picks one on
+            # another string whenever two strings are played in parallel, and
+            # then the search for its partner runs along the wrong line.
+            on = frm.baseline if frm is not None else to.baseline if to is not None else None
+            if on is None:
+                on = self._string_at(over)
             if frm is None:
-                frm = self._nearest(cx, -1, to)
+                frm = self._nearest(cx, -1, on)
             if to is None:
-                to = self._nearest(cx, +1, frm)
+                to = self._nearest(cx, +1, on)
             if frm is None or to is None or frm.fret is None or to.fret is None:
                 self.unattached += 1  # nothing to say what the slur does
                 continue

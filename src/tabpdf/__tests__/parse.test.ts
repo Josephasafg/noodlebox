@@ -408,6 +408,73 @@ describe('parseScore articulations', () => {
     ])
     expect(score.notes.every((n) => n.art === undefined)).toBe(true)
   })
+
+  // The letter is set below the staff, under a column that may hold a note on
+  // every string, and nothing in it says which string it belongs to. Handing it
+  // to all of them turns a chord whose top string hammers 5 to 7 into one where
+  // every string does — printed as 5h7657 where the music reads 7655h7.
+  it('gives a mark under a chord only to the string that can play it', () => {
+    const score = parseScore([
+      page({
+        texts: [
+          fret(0, 240, '5'),
+          under(260, 'H'),
+          // The chord: the top string climbs 5 to 7, the others hold their fret.
+          fret(0, 280, '7'),
+          fret(1, 280, '5'),
+          fret(2, 281, '6'),
+          fret(2, 240, '6'),
+          fret(0, 100, '1'),
+          fret(0, 402, '1'),
+        ],
+      }),
+    ])
+    expect(score.notes.find((n) => n.fret === 7)?.art).toBe('hammer')
+    expect(score.notes.filter((n) => n.art !== undefined)).toHaveLength(1)
+  })
+
+  it('drops a mark from a string that sounded nothing to lead out of', () => {
+    const score = parseScore([
+      page({
+        texts: [
+          fret(0, 240, '5'),
+          under(260, 'H'),
+          fret(0, 280, '7'),
+          // Nothing before it on this string, so no hammer-on can start here.
+          fret(3, 280, '9'),
+          fret(0, 100, '1'),
+          fret(0, 402, '1'),
+        ],
+      }),
+    ])
+    expect(score.notes.find((n) => n.fret === 9)?.art).toBeUndefined()
+  })
+
+  it('drops a hammer-on that would go down the neck', () => {
+    const score = withMark('H', ['7', '5'])
+    expect(score.notes.every((n) => n.art === undefined)).toBe(true)
+  })
+
+  it('drops a pull-off that would go up the neck', () => {
+    const score = withMark('P', ['5', '7'])
+    expect(score.notes.every((n) => n.art === undefined)).toBe(true)
+  })
+
+  it('reads a slide into a muted note as up, since nothing says otherwise', () => {
+    const score = withMark('sl.', ['5', 'x'])
+    expect(score.notes.find((n) => n.fret === null)?.art).toBe('slide-up')
+  })
+
+  it('carries a slur out of the measure before', () => {
+    const score = parseScore([
+      page({
+        texts: [fret(2, 240, '5'), under(268, 'H'), fret(2, 290, '7')],
+        // A bar line between the two notes the mark joins.
+        barlines: [275, 386],
+      }),
+    ])
+    expect(score.notes.find((n) => n.fret === 7)?.art).toBe('hammer')
+  })
 })
 
 describe('bendSemitones', () => {

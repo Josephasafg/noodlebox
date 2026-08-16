@@ -453,6 +453,8 @@ export function parseScore(
     xStart: number
     xEnd: number
     onsets: Onset[]
+    /** Everything the staff sounded before this measure, for slurs across a barline. */
+    before: Onset[]
     below: TabTextItem[]
     marker?: string
   }
@@ -510,6 +512,7 @@ export function parseScore(
           xStart,
           xEnd,
           onsets: inside,
+          before: onsets.filter((o) => o.cx < xStart),
           below,
           marker: marker ? marker.str.trim().slice(0, 28) : undefined,
         })
@@ -572,13 +575,13 @@ export function parseScore(
       onsetBeats.push(Math.min(beat, beatsPerBar - BEAT_GRID))
     }
 
-    const articulationFor = buildArticulations(p.below, p.onsets, p.staff.spacing)
+    const articulationFor = buildArticulations(p.below, p.onsets, p.before, p.staff.spacing)
 
     p.onsets.forEach((onset, i) => {
       const beat = onsetBeats[i]
       const next = onsetBeats[i + 1] ?? beatsPerBar
       const length = Math.max(BEAT_GRID, next - beat)
-      const art = articulationFor.get(i)
+      const artFor = articulationFor.get(i)
       const bend = bendFor.get(onset)
       // One amount is printed over the arrow, and nothing in it says which
       // string was pushed. On a chord the highest string is by far the likeliest,
@@ -593,7 +596,7 @@ export function parseScore(
           ghost: n.ghost,
           beat: startBeat + beat,
           length,
-          art,
+          art: artFor?.get(n.line),
           bend: n.line === bentLine ? bend : undefined,
         })
       }
@@ -644,18 +647,77 @@ export function parseScore(
   }
 }
 
+/** How far either of the notes a legato mark joins may sit from the mark itself. */
+const LEGATO_REACH = 8
+
+/**
+ * The note this string last sounded before a mark set at `mx`, if it was near
+ * enough to be slurred from. The symbol is written between the two notes it
+ * joins, so both are measured from the symbol.
+ */
+function sounding(
+  chain: readonly Onset[],
+  at: number,
+  line: number,
+  mx: number,
+  spacing: number,
+): RawNote | null {
+  for (let i = at - 1; i >= 0; i--) {
+    if (mx - chain[i].cx > spacing * LEGATO_REACH) return null
+    const found = chain[i].notes.find((n) => n.line === line)
+    if (found) return found
+  }
+  return null
+}
+
+/**
+ * The articulation this note can actually be played with, or null for none.
+ *
+ * A hammer-on goes up the neck and a pull-off comes down it, so the frets
+ * either side say whether a mark can mean what it says on this string. A slide
+ * only needs the fret to move; where one end is muted nothing says which way it
+ * goes, and up is how tab writes an unqualified slide.
+ */
+function settle(art: Articulation, from: RawNote, to: RawNote): Articulation | null {
+  if (art === 'slide-up') {
+    if (from.fret === null || to.fret === null) return art
+    if (to.fret === from.fret) return null
+    return to.fret < from.fret ? 'slide-down' : 'slide-up'
+  }
+  if (from.fret === null || to.fret === null) return null
+  if (art === 'hammer') return to.fret > from.fret ? art : null
+  return to.fret < from.fret ? art : null
+}
+
 /**
  * Map the legato marks printed under the staff onto the notes they belong to.
+ *
  * An `H` or `P` sits between the two notes it joins, so it belongs to the note
- * that follows it — the one that is hammered onto or pulled off to.
+ * that follows it — the one that is hammered onto or pulled off to. Which
+ * *string* it belongs to is not written anywhere: the letter is set below the
+ * staff, under a column that may hold a note on every string. Giving it to all
+ * of them is what the reader used to do, and on a chord it is badly wrong — a
+ * chord whose top string hammers 5 to 7 came out with an `h` on all four,
+ * printing `5h7657` where the music is `7655h7`, and leaving stray `h`s on
+ * strings that had sounded nothing at all for the symbol to lead out of.
+ *
+ * So the mark goes to the notes in that column that could be played it: the
+ * string sounded a fret it can move from, in the direction the symbol means.
+ * Usually exactly one qualifies. Where several do, a chord really is slurred
+ * together and they all get it; where none does, the mark is dropped, which is
+ * the honest reading of a symbol nothing in the column can perform.
  */
 function buildArticulations(
   below: readonly TabTextItem[],
   onsets: readonly Onset[],
+  before: readonly Onset[],
   spacing: number,
-): Map<number, Articulation> {
-  const out = new Map<number, Articulation>()
+): Map<number, Map<number, Articulation>> {
+  const out = new Map<number, Map<number, Articulation>>()
   if (onsets.length === 0) return out
+  // A slur may lead out of the last note of the measure before, so the search
+  // for what the string was sounding runs back past the barline.
+  const chain = [...before, ...onsets]
 
   for (const mark of below) {
     const str = mark.str.trim()
@@ -675,16 +737,17 @@ function buildArticulations(
     }
     if (target === -1) continue
     // A mark far from any note is more likely a stray letter than a slur.
-    if (onsets[target].cx - mx > spacing * 8) continue
+    if (onsets[target].cx - mx > spacing * LEGATO_REACH) continue
 
-    if (art === 'slide-up') {
-      const from = onsets[target - 1]
-      const to = onsets[target]
-      const fromFret = from ? highestFret(from) : null
-      const toFret = highestFret(to)
-      if (fromFret !== null && toFret !== null && toFret < fromFret) art = 'slide-down'
+    for (const note of onsets[target].notes) {
+      const from = sounding(chain, before.length + target, note.line, mx, spacing)
+      if (from === null) continue
+      const settled = settle(art, from, note)
+      if (settled === null) continue
+      const byString = out.get(target) ?? new Map<number, Articulation>()
+      byString.set(note.line, settled)
+      out.set(target, byString)
     }
-    out.set(target, art)
   }
   return out
 }
@@ -775,9 +838,4 @@ function buildBends(
     bends.set(onsets[target], { semitones, direction: 'up' })
   }
   return { bends, unattached }
-}
-
-function highestFret(onset: Onset): number | null {
-  const frets = onset.notes.map((n) => n.fret).filter((f): f is number => f !== null)
-  return frets.length === 0 ? null : Math.max(...frets)
 }
