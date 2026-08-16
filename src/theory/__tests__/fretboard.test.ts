@@ -1,18 +1,35 @@
 import { describe, it, expect } from 'vitest'
 import {
+  FRET_COUNT,
   noteAt,
   rootFretOnLowE,
   notesInPosition,
+  placedPositions,
   positionsForScale,
   STANDARD_TUNING,
 } from '../fretboard'
-import { SCALES } from '../scales'
+import { SCALES, type ScaleDef } from '../scales'
+import { CHROMATIC_KEYS, type PitchClass } from '../notes'
 
 function frets(notes: { stringIdx: number; fret: number }[], stringIdx: number): number[] {
   return notes
     .filter((n) => n.stringIdx === stringIdx)
     .map((n) => n.fret)
     .sort((a, b) => a - b)
+}
+
+/** Position chips are numbered by neck order, so find a named box by its label. */
+function boxIndex(root: PitchClass, scale: ScaleDef, label: string): number {
+  const found = placedPositions(root, scale).find((p) => p.label === label)
+  if (!found) throw new Error(`no box ${label}`)
+  return found.index
+}
+
+function shapeOf(notes: { stringIdx: number; fret: number }[]): string[] {
+  const low = Math.min(...notes.map((n) => n.fret))
+  return notes
+    .map((n) => `${n.stringIdx}:${n.fret - low}`)
+    .sort()
 }
 
 describe('noteAt / rootFretOnLowE', () => {
@@ -42,7 +59,7 @@ describe('A minor pentatonic — canonical shapes', () => {
   const rootA = 9
 
   it('box I contains the textbook frets 5 & 8 / 5 & 7 shape', () => {
-    const notes = notesInPosition(rootA, scale, 0)
+    const notes = notesInPosition(rootA, scale, boxIndex(rootA, scale, 'I'))
     expect(frets(notes, 0)).toEqual([5, 8]) // low E: A, C
     expect(frets(notes, 1)).toEqual([5, 7]) // A: D, E
     expect(frets(notes, 2)).toEqual([5, 7]) // D: G, A
@@ -52,7 +69,7 @@ describe('A minor pentatonic — canonical shapes', () => {
   })
 
   it('box II (frets 7–10)', () => {
-    const notes = notesInPosition(rootA, scale, 1)
+    const notes = notesInPosition(rootA, scale, boxIndex(rootA, scale, 'II'))
     expect(frets(notes, 0)).toEqual([8, 10])
     expect(frets(notes, 1)).toEqual([7, 10])
     expect(frets(notes, 2)).toEqual([7, 10])
@@ -62,7 +79,7 @@ describe('A minor pentatonic — canonical shapes', () => {
   })
 
   it('root notes in box I are only the A notes', () => {
-    const notes = notesInPosition(rootA, scale, 0)
+    const notes = notesInPosition(rootA, scale, boxIndex(rootA, scale, 'I'))
     const roots = notes.filter((n) => n.isRoot)
     expect(roots.every((n) => n.pitch === 9)).toBe(true)
     expect(roots.length).toBe(3) // fret 5 on low E, A, and high E
@@ -73,11 +90,82 @@ describe('transposition — same shape moves intact', () => {
   const scale = SCALES['minor-pentatonic']
 
   it('A min pent box I transposed by +3 semitones equals C min pent box I', () => {
-    const a = notesInPosition(9, scale, 0)
-    const c = notesInPosition(0, scale, 0)
+    const a = notesInPosition(9, scale, boxIndex(9, scale, 'I'))
+    const c = notesInPosition(0, scale, boxIndex(0, scale, 'I'))
     const aShape = a.map((n) => [n.stringIdx, n.fret - 5] as const).sort()
     const cShape = c.map((n) => [n.stringIdx, n.fret - 8] as const).sort()
     expect(aShape).toEqual(cShape)
+  })
+
+  it('a box dropped an octave keeps its shape intact', () => {
+    // D box II lives at frets 0–3, an octave below where the root pins it.
+    const d = notesInPosition(2, scale, boxIndex(2, scale, 'II'))
+    const a = notesInPosition(9, scale, boxIndex(9, scale, 'II'))
+    expect(shapeOf(d)).toEqual(shapeOf(a))
+  })
+})
+
+describe('octave placement — boxes sit under the hand, not off the neck', () => {
+  const minPent = SCALES['minor-pentatonic']
+  const rootD = 2
+
+  it('D min pent runs up the neck from the nut, not from fret 10', () => {
+    const placed = placedPositions(rootD, minPent)
+    expect(placed.map((p) => p.startFret)).toEqual([0, 2, 5, 7, 10])
+    // The root only appears at fret 10 on the low E, so box I stays up there
+    // and the four boxes below it are the ones that dropped an octave.
+    expect(placed.map((p) => p.label)).toEqual(['II', 'III', 'IV', 'V', 'I'])
+  })
+
+  it('D blues position 1 is the low box, not frets 10–13', () => {
+    const notes = notesInPosition(rootD, SCALES['blues'], 0)
+    expect(notes.length).toBeGreaterThan(0)
+    expect(Math.max(...notes.map((n) => n.fret))).toBeLessThanOrEqual(3)
+  })
+
+  it('positions are ordered low to high for every key', () => {
+    for (const scale of [minPent, SCALES['blues'], SCALES['major']]) {
+      for (const root of CHROMATIC_KEYS) {
+        const starts = placedPositions(root, scale).map((p) => p.startFret)
+        const ascending = [...starts].sort((a, b) => a - b)
+        expect(starts).toEqual(ascending)
+      }
+    }
+  })
+
+  it('no box falls off either end of the neck', () => {
+    for (const scale of [minPent, SCALES['major-pentatonic'], SCALES['blues'], SCALES['major']]) {
+      for (const root of CHROMATIC_KEYS) {
+        for (const p of placedPositions(root, scale)) {
+          expect(p.startFret).toBeGreaterThanOrEqual(0)
+          expect(p.endFret).toBeLessThanOrEqual(FRET_COUNT)
+        }
+      }
+    }
+  })
+
+  it('every position still yields notes on all six strings', () => {
+    for (const scale of [minPent, SCALES['blues'], SCALES['major']]) {
+      for (const root of CHROMATIC_KEYS) {
+        placedPositions(root, scale).forEach((p) => {
+          const strings = new Set(notesInPosition(root, scale, p.index).map((n) => n.stringIdx))
+          expect(strings.size).toBe(6)
+        })
+      }
+    }
+  })
+
+  it('E major keeps its open position at index 0', () => {
+    const placed = placedPositions(4, SCALES['major'])
+    expect(placed[0].label).toBe('I')
+    expect(placed[0].startFret).toBe(0)
+  })
+
+  it('D major top box no longer overflows the 22nd fret', () => {
+    // Anchored at the low-E root (fret 10) this box spanned frets 21–24.
+    const placed = placedPositions(rootD, SCALES['major'])
+    const seventh = placed.find((p) => p.label === 'VII')!
+    expect(seventh.endFret).toBeLessThanOrEqual(FRET_COUNT)
   })
 })
 

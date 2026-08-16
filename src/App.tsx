@@ -19,8 +19,7 @@ import {
   FRET_COUNT,
   allScaleNotes,
   notesInPosition,
-  positionsForScale,
-  rootFretOnLowE,
+  placedPositions,
   scaleSequence,
   type FretNote,
 } from './theory/fretboard'
@@ -65,9 +64,8 @@ export function App() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
 
-  const positions = positionsForScale(scale)
+  const positions = placedPositions(key, scale)
   const position = positions[positionIndex]
-  const rootFret = rootFretOnLowE(key)
   const pitchClasses = scalePitchClasses(key, scale)
 
   const library = useScoreLibrary()
@@ -186,12 +184,12 @@ export function App() {
     ? Math.max(0, Math.min(...scoreFrets) - 1)
     : resolved
       ? Math.max(0, resolved.minFret - 1)
-      : rootFret + position.startOffset
+      : Math.max(0, position.startFret)
   const highEnd = scoreFretNotes
     ? Math.min(FRET_COUNT, Math.max(...scoreFrets) + 1)
     : resolved
       ? Math.min(FRET_COUNT, resolved.maxFret + 1)
-      : rootFret + position.endOffset
+      : Math.min(FRET_COUNT, position.endFret)
 
   const displayNotes = useMemo(() => {
     if (scoreFretNotes) return dedupeByPosition(scoreFretNotes)
