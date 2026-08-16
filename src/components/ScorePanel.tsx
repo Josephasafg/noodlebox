@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { ScoreSheet } from './ScoreSheet'
+import { NoteEditor } from './NoteEditor'
+import type { NoteChange } from '../tabpdf/edit'
 import type { ParsedScore } from '../tabpdf/types'
 import styles from './ScorePanel.module.css'
 
@@ -21,6 +23,8 @@ interface Props {
   /** Bars a single press will play, so the control can say so. */
   playWindow: number
   onPlayFrom: (measureIndex: number) => void
+  /** Correct one note of the tab, as read off the staff. */
+  onNoteChange: (index: number, change: NoteChange) => void
   onBpmChange: (bpm: number) => void
   onTuningShiftChange: (shift: number) => void
   onBeatsPerBarChange: (beats: number) => void
@@ -34,6 +38,7 @@ export function ScorePanel({
   playingMeasure,
   playWindow,
   onPlayFrom,
+  onNoteChange,
   onBpmChange,
   onTuningShiftChange,
   onBeatsPerBarChange,
@@ -41,6 +46,14 @@ export function ScorePanel({
 }: Props) {
   const [showNotes, setShowNotes] = useState(false)
   const [scrollTo, setScrollTo] = useState<number | null>(null)
+  /** The note being corrected, and where on screen it was picked up. */
+  const [editing, setEditing] = useState<{ index: number; anchor: DOMRect } | null>(null)
+
+  // Stable, or every row of the sheet re-renders on each playhead frame.
+  const openNote = useCallback((index: number, anchor: DOMRect) => {
+    setEditing({ index, anchor })
+  }, [])
+  const closeNote = useCallback(() => setEditing(null), [])
 
   const sections = useMemo(
     () => score.measures.filter((m) => m.marker !== undefined),
@@ -124,7 +137,7 @@ export function ScorePanel({
         </label>
 
         <span className={styles.hint}>
-          Tap any bar to hear it — plays {playWindow} bars from there
+          Tap any bar to hear it — plays {playWindow} bars from there. Tap a note to correct it.
         </span>
       </div>
 
@@ -155,8 +168,19 @@ export function ScorePanel({
         activeNotes={activeNotes}
         playingMeasure={playingMeasure}
         onPlayFrom={onPlayFrom}
+        onEditNote={openNote}
         scrollToMeasure={scrollTo}
       />
+
+      {editing !== null && (
+        <NoteEditor
+          score={score}
+          noteIndex={editing.index}
+          anchor={editing.anchor}
+          onChange={onNoteChange}
+          onClose={closeNote}
+        />
+      )}
 
       {score.warnings.length > 0 && (
         <div className={styles.notes}>

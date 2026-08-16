@@ -53,6 +53,8 @@ interface RowProps {
   activeNotes: readonly number[]
   playingMeasure: number | null
   onPlayFrom: (measureIndex: number) => void
+  /** Open a note for correction, beside where it is engraved. */
+  onEditNote: (noteIndex: number, anchor: DOMRect) => void
 }
 
 const ScoreRow = memo(function ScoreRow({
@@ -66,6 +68,7 @@ const ScoreRow = memo(function ScoreRow({
   activeNotes,
   playingMeasure,
   onPlayFrom,
+  onEditNote,
 }: RowProps) {
   const active = useMemo(() => new Set(activeNotes), [activeNotes])
   const staffW = measureIndices.length * measureW
@@ -285,6 +288,32 @@ const ScoreRow = memo(function ScoreRow({
         )
       })}
 
+      {/* Hit targets for the notes, over the glyphs so a number and the mark
+          beside it can each be picked up, and over the bar background so
+          clicking a note corrects it while clicking the bar still plays it. */}
+      {glyphs.map((g) => {
+        const note = score.notes[g.index]
+        if (!note) return null
+        const beatInBar = note.beat - (score.measures[note.measureIndex]?.startBeat ?? 0)
+        const where = `bar ${note.measureIndex + 1}, beat ${beatInBar + 1}, ${
+          STRING_LETTERS[STRINGS - 1 - note.stringIdx]
+        } string`
+        return (
+          <rect
+            key={`e-${g.key}`}
+            className={styles.noteHit}
+            x={(g.anchor === 'start' ? g.x : g.x - g.boxW / 2) - 2}
+            y={g.y - 9}
+            width={g.boxW + 4}
+            height={18}
+            rx={5}
+            onClick={(e) => onEditNote(g.index, e.currentTarget.getBoundingClientRect())}
+          >
+            <title>{g.kind === 'fret' ? `Edit ${where}` : `Edit the mark on ${where}`}</title>
+          </rect>
+        )
+      })}
+
       {beat !== null &&
         (() => {
           const slot = measureIndices.findIndex(
@@ -317,6 +346,8 @@ interface Props {
   activeNotes: readonly number[]
   playingMeasure: number | null
   onPlayFrom: (measureIndex: number) => void
+  /** Open a note for correction, beside where it is engraved. */
+  onEditNote: (noteIndex: number, anchor: DOMRect) => void
   /** Bar to bring into view; re-scrolls whenever the value changes. */
   scrollToMeasure?: number | null
 }
@@ -327,6 +358,7 @@ export function ScoreSheet({
   activeNotes,
   playingMeasure,
   onPlayFrom,
+  onEditNote,
   scrollToMeasure = null,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -400,6 +432,7 @@ export function ScoreSheet({
           activeNotes={i === liveRow ? activeNotes : NO_ACTIVE}
           playingMeasure={playingMeasure}
           onPlayFrom={onPlayFrom}
+          onEditNote={onEditNote}
         />
       ))}
     </div>

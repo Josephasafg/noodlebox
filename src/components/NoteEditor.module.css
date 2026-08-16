@@ -1,0 +1,202 @@
+/*
+ * An opaque card, unlike the glass panels behind it — so its own controls are
+ * tinted with ink and accent rather than with the white that lifts a control off
+ * a tinted surface. White on white cannot be seen.
+ */
+.card {
+  position: fixed;
+  z-index: 120;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(255, 255, 255, 0.9));
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  box-shadow: 0 24px 60px -24px rgba(90, 60, 120, 0.45);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.where {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-muted);
+}
+
+.close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(58, 42, 74, 0.14);
+  background: rgba(58, 42, 74, 0.04);
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .close:hover {
+    background: rgba(58, 42, 74, 0.09);
+    color: var(--ink);
+  }
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  padding: 3px 5px;
+  border-radius: var(--r-pill);
+  background: rgba(58, 42, 74, 0.04);
+  border: 1px solid rgba(58, 42, 74, 0.12);
+}
+
+.stepper button {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-pill);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stepper button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .stepper button:hover:not(:disabled) {
+    background: rgba(194, 135, 240, 0.16);
+    border-color: rgba(194, 135, 240, 0.4);
+    color: var(--ink);
+  }
+}
+
+.fret {
+  width: 44px;
+  padding: 3px 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(58, 42, 74, 0.16);
+}
+
+/* The arrows would crowd a field this narrow; the steppers do that job. */
+.fret::-webkit-outer-spin-button,
+.fret::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.fret {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.attacks {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.attack {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 5px 9px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-chip);
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .attack:hover {
+    background: rgba(194, 135, 240, 0.12);
+    border-color: rgba(194, 135, 240, 0.3);
+    color: var(--ink);
+  }
+
+  .attack:hover .attackSymbol {
+    color: var(--accent-lilac);
+  }
+}
+
+.attackOn,
+.attackOn:hover {
+  background: rgba(194, 135, 240, 0.22);
+  border-color: rgba(194, 135, 240, 0.5);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.attackSymbol {
+  flex: none;
+  width: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.attackOn .attackSymbol {
+  color: var(--accent-lilac);
+}
+
+.reads {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-muted);
+}
+
+.reading {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}

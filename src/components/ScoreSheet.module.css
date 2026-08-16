@@ -100,6 +100,21 @@
   }
 }
 
+.noteHit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+/* The target sits over the number it belongs to, so hover is drawn as an
+   outline — a fill would wash out the very glyph being pointed at. */
+@media (hover: hover) {
+  .noteHit:hover {
+    fill: rgba(194, 135, 240, 0.08);
+    stroke: rgba(194, 135, 240, 0.55);
+    stroke-width: 1;
+  }
+}
+
 .hitOn {
   fill: rgba(255, 138, 101, 0.1);
 }

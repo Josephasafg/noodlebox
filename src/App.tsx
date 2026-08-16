@@ -486,6 +486,7 @@ export function App() {
             playingMeasure={playingMeasure}
             playWindow={Math.min(SCORE_PLAY_BARS, score.measures.length)}
             onPlayFrom={handlePlayFromBar}
+            onNoteChange={library.editNote}
             onBpmChange={library.setBpm}
             onTuningShiftChange={library.setTuningShift}
             onBeatsPerBarChange={(beats) => void library.setBeatsPerBar(beats)}

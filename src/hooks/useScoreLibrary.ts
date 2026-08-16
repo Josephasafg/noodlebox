@@ -23,6 +23,7 @@ import {
   type StoredSource,
   type TabSource,
 } from '../tabpdf/library'
+import { applyNoteChange, type NoteChange } from '../tabpdf/edit'
 import type { ParsedScore, TabPagePrimitives } from '../tabpdf/types'
 
 /** Which tab was open last, so a refresh reopens it. */
@@ -458,6 +459,20 @@ export function useScoreLibrary() {
     [entry, persist],
   )
 
+  /** Correct a single note of the open tab, and keep the correction. */
+  const editNote = useCallback(
+    (index: number, change: NoteChange) => {
+      setScore((current) => {
+        if (!current) return current
+        const next = applyNoteChange(current, index, change)
+        if (next === current) return current
+        persist(entry, next)
+        return next
+      })
+    },
+    [entry, persist],
+  )
+
   const setTuningShift = useCallback(
     (tuningShift: number) => {
       setScore((current) => {
@@ -607,6 +622,7 @@ export function useScoreLibrary() {
     rename,
     close,
     setBpm,
+    editNote,
     setTuningShift,
     setBeatsPerBar,
     dismissError,
