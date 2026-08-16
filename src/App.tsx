@@ -260,22 +260,36 @@ export function App() {
     [playback, playScoreFrom, playFrom, resolved, displayNotes],
   )
 
+  /**
+   * Stop, leaving the tab standing at the bar it had reached.
+   *
+   * Stopping is how you take a run at a passage again, so the next press picks
+   * the tab up where it left off rather than at the top of the section. Tapping
+   * a bar is what moves that checkpoint somewhere else.
+   */
+  const stopPlayback = useCallback(() => {
+    if (score && playingMeasure !== null) {
+      setPlayFrom(Math.min(playingMeasure, score.measures.length - 1))
+    }
+    playback.stop()
+  }, [playback, playingMeasure, score])
+
   const handleTogglePlay = useCallback(() => {
     if (playback.playing || playback.loading) {
-      playback.stop()
+      stopPlayback()
       return
     }
     startTarget(target)
-  }, [playback, startTarget, target])
+  }, [playback.playing, playback.loading, stopPlayback, startTarget, target])
 
   const handlePlayLick = useCallback(() => {
     setPreferred('lick')
     if (playback.playing || playback.loading) {
-      playback.stop()
+      stopPlayback()
       return
     }
     startTarget('lick')
-  }, [playback, startTarget])
+  }, [playback.playing, playback.loading, stopPlayback, startTarget])
 
   const handlePlayFromBar = useCallback(
     (measureIndex: number) => {
