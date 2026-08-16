@@ -43,8 +43,15 @@ MAX_FRET = 24
 # the arrow by itself; this font prints no amount, only the arrow). The empty
 # string is a confirmed not-a-number. This is the single definition: the server
 # validates submissions against it and `emit` interprets the same grammar.
+#
+# A slide mark may also be written `/` or `\`, which is what the app itself
+# prints for one and so what a person reaches for. Both mean the same thing here
+# as a dash does: which way the slide goes is read from the frets it joins, never
+# from the name.
+SLIDE = r"(?:-{1,2}|[/\\])"
 LABEL_RE = re.compile(
-    r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~|b)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|b\d{1,2}|b|[x()])?$"
+    rf"^(?:\d{{1,2}}(?:[hp]\d{{1,2}}|{SLIDE}|~|b)?|{SLIDE}\d{{1,2}}|{SLIDE}"
+    rf"|~\d{{1,2}}|~|b\d{{1,2}}|b|[x()])?$"
 )
 
 # How much of the page to keep either side of a printed number when a shape is
@@ -276,18 +283,38 @@ def _first_of_each(shapes: Shapes) -> dict[int, glyphs.Component]:
     return first
 
 
+def _typical_of_each(shapes: Shapes) -> dict[int, glyphs.Component]:
+    """The member nearest its shape's centroid — the one that most looks like it."""
+    best: dict[int, tuple[float, glyphs.Component]] = {}
+    for index, component in enumerate(shapes.every):
+        label = shapes.assignment[index]
+        away = float(np.abs(shapes.centroids[label] - component.template).mean())
+        if label not in best or away < best[label][0]:
+            best[label] = (away, component)
+    return {label: component for label, (_, component) in best.items()}
+
+
 def shape_crop(
     readings: list[Reading], shapes: Shapes, index: int, scale: int = 6, pad: int = 2
 ) -> np.ndarray | None:
     """
     One shape as the pixels it really is, magnified for a person to read.
 
+    The member shown is the one nearest the shape's own centre, not the first one
+    the page happened to produce. That is not cosmetic. Slur arcs and slide dashes
+    normalise into near-identical templates and land in one cluster, and on the
+    reference clip that cluster holds 46 arcs and 27 dashes — while the first
+    member of it is a dash. Shown that, a person sees a shape with no arcs in it,
+    cannot find the arcs anywhere on the screen, and leaves the box empty, which
+    costs the piece every hammer-on, pull-off and slide it has. The member nearest
+    the centre of that same cluster is a full arc.
+
     Aspect ratio is preserved, which matters more than it looks: squashing a
     glyph to a square costs real information — a stretched digit was measured
     losing ten points of recognition accuracy — and the reader here is being
     asked to tell a 6 from a 5 at around ten pixels tall.
     """
-    component = _first_of_each(shapes).get(index)
+    component = _typical_of_each(shapes).get(index)
     if component is None:
         return None
     return component_crop(readings, component, scale=scale, pad=pad)
@@ -559,9 +586,9 @@ def exemplar_sheet(
 _LEGATO_PAIR = re.compile(r"^(\d{1,2})([hp])(\d{1,2})$")
 _ARC_AFTER = re.compile(r"^(\d{1,2})~$")
 _ARC_BEFORE = re.compile(r"^~(\d{1,2})$")
-_SLIDE_AFTER = re.compile(r"^(\d{1,2})(-{1,2})$")
-_SLIDE_BEFORE = re.compile(r"^(-{1,2})(\d{1,2})$")
-_LONE_SLIDE = re.compile(r"^-{1,2}$")
+_SLIDE_AFTER = re.compile(rf"^(\d{{1,2}})({SLIDE})$")
+_SLIDE_BEFORE = re.compile(rf"^({SLIDE})(\d{{1,2}})$")
+_LONE_SLIDE = re.compile(rf"^{SLIDE}$")
 _BEND_AFTER = re.compile(r"^(\d{1,2})b$")
 # The arrow leans over the note it belongs to rather than sitting after it, so
 # which side of the digit it groups on is down to where its stem happens to

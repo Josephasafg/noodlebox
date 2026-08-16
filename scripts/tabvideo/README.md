@@ -196,7 +196,17 @@ detected, so before this every note a mark decorated was silenced as incomplete 
 Arcs and dashes flatten into near-identical templates and can end up in one
 cluster, so a single label can cover marks of both kinds. Either technique name
 (`~` or `-`) confirms the cluster holds technique marks; which kind each mark is
-comes from its own curve. Measured over the clip's 56 flat marks: the 11 dashes
+comes from its own curve. `/` and `\` name a slide too — they are what the app
+prints for one, so they are what a person reaches for, and they mean exactly what
+a dash means since the direction is read from the frets.
+
+**Which member of a shape is shown for naming is not cosmetic.** The naming
+screen showed the first mark the page produced for each cluster, and for that
+cluster on the reference clip the first mark is a dash while 46 of its 73 marks
+are arcs. Shown a dash, a person looks for the arcs, cannot find them anywhere on
+the screen, and leaves the box empty — which costs the piece every hammer-on,
+pull-off and slide it has. The mark nearest the cluster's own centre is a full
+arc, and that is what is shown now. Measured over the clip's 56 flat marks: the 11 dashes
 bow at most 0.5px, 45 of the 46 arcs bow 0.9–1.8px, and the one shallow arc at
 0.5px is misread as a slide — a decoration wobble, never a wrong note.
 

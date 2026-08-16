@@ -1078,6 +1078,45 @@ def test_a_lone_bend_arrow_is_a_bend_mark_too() -> None:
     assert _above_staff(texts[0], staff)
 
 
+def test_a_slide_may_be_named_with_the_slash_the_tab_itself_prints() -> None:
+    """
+    `/` is what the app prints for a slide, so it is what a person types for one.
+
+    It means exactly what a dash means here: which way the slide goes is read
+    from the frets it joins, never from the name. Refusing the keystroke, which
+    is what used to happen, looks like a broken text box.
+    """
+    staff = _tab_staff()
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_flat(_mark(110, 124, int(staff.lines[2]), height=2), "/")
+    assert [token.str for token in emitter.resolve()] == ["sl."]
+    assert pipeline.LABEL_RE.match("12/") and pipeline.LABEL_RE.match("/12")
+    assert not pipeline.LABEL_RE.match("//")
+
+
+def test_the_shape_shown_for_naming_is_the_one_that_most_looks_like_it() -> None:
+    """
+    Arcs and dashes share a cluster, so which member is shown decides what a
+    person thinks the shape is. On the reference clip the first member of that
+    cluster is a dash and 46 of its 73 marks are arcs — shown the dash, a person
+    finds no arc anywhere on the screen and leaves the box empty, which costs the
+    piece every hammer-on, pull-off and slide it has.
+    """
+    page = render_system([(2, 100, "7"), (2, 200, "1"), (2, 300, "1"), (2, 400, "1")])
+    reading = cli.Reading(frames.Page(index=0, start_s=0.0, end_s=1.0, image=page))
+    shapes = pipeline.find_shapes([reading])
+    ones = max(range(len(shapes)), key=lambda index: shapes.counts[index])
+
+    typical = pipeline._typical_of_each(shapes)[ones]
+    centre = shapes.centroids[ones]
+    away = float(np.abs(centre - typical.template).mean())
+    assert all(
+        away <= float(np.abs(centre - other.template).mean())
+        for other in shapes.every
+        if shapes.label_of(other) == ones
+    )
+
+
 def test_a_flat_marks_own_curve_outranks_its_label() -> None:
     """
     Arcs and dashes flatten into near-identical templates and can share one

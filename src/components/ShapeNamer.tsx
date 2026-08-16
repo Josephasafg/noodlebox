@@ -19,8 +19,13 @@ interface Props {
  * `4~` or `~4`), and a bend as an up arrow beside its number (`12b`, or a lone
  * `b` for the arrow by itself). Every prefix of a valid name must also pass,
  * because this is tested on each keystroke.
+ *
+ * A slide may also be written `/` or `\`, which is what the tab itself prints
+ * for one and so what people reach for. It means exactly what a dash means: the
+ * direction is read from the frets, never from the name. Refusing the keystroke
+ * silently, which is what happened before, looks like a broken text box.
  */
-const ALLOWED = /^(\d{1,2}([hp]\d{0,2}|-{1,2}|~|b)?|-{1,2}\d{0,2}|~\d{0,2}|[xX()b])?$/
+const ALLOWED = /^(\d{1,2}([hp]\d{0,2}|-{1,2}|[/\\]|~|b)?|(-{1,2}|[/\\])\d{0,2}|~\d{0,2}|[xX()b])?$/
 
 /**
  * Naming the shapes found in a video.
@@ -83,8 +88,11 @@ export function ShapeNamer({ job, busy, onSubmit, onCancel }: Props) {
           Type what each shape says. Techniques have names too: a small digit fused to a full one
           is a hammer-on (<code>4h6</code>), an arc over a pair is a pull-off (<code>4p2</code>, a
           lone arc is <code>~</code>), a dash beside a number is a slide (<code>12-</code>, a lone
-          dash is <code>-</code>), an up arrow is a bend (<code>12b</code>, a lone arrow is{' '}
-          <code>b</code>), and <code>x</code> is a muted note. Leave anything else empty —
+          dash is <code>-</code> or <code>/</code>), an up arrow is a bend (<code>12b</code>, a lone
+          arrow is <code>b</code>), and <code>x</code> is a muted note. Slur arcs and slide dashes
+          look alike once shrunk to the same box, so one shape often holds both — naming it{' '}
+          <code>~</code> or <code>-</code> covers them either way, because each mark's own curve
+          decides which it is. Leave anything else empty —
           an empty box is counted while a wrong name becomes a wrong note everywhere that shape
           appears. Names are remembered, so the next video in this font needs none of this.
           {job.autoNamedCount ? (
