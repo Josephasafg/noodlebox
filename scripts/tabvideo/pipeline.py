@@ -489,40 +489,6 @@ def run_context(
     return out
 
 
-def contested_runs(
-    readings: list[Reading], shapes: Shapes, labels: dict[str, str], patterns: list[str]
-) -> dict[str, list[glyphs.Run]]:
-    """
-    Every printed run spelling one of `patterns`, a system at a time.
-
-    Ordered so that taking the first few gives printings from as many different
-    systems as possible, for the same reason `shape_members` does: anything asked
-    to judge these should be shown three bars rather than one bar three times.
-    """
-    wanted = set(patterns)
-    by_system: dict[str, list[list[glyphs.Run]]] = {}
-    for reading in readings:
-        here: dict[str, list[glyphs.Run]] = {}
-        for _, run in reading.runs:
-            if run.truncated:
-                continue
-            spelled = glyphs.spell(run, shapes.assignment, shapes.index_of, labels)
-            if spelled in wanted:
-                here.setdefault(spelled, []).append(run)
-        for spelled, found in here.items():
-            by_system.setdefault(spelled, []).append(found)
-
-    out: dict[str, list[glyphs.Run]] = {}
-    for spelled, queues in by_system.items():
-        ordered: list[glyphs.Run] = []
-        depth = 0
-        while any(len(queue) > depth for queue in queues):
-            ordered.extend(queue[depth] for queue in queues if len(queue) > depth)
-            depth += 1
-        out[spelled] = ordered
-    return out
-
-
 def component_crop(
     readings: list[Reading], component: glyphs.Component, scale: int = 6, pad: int = 2
 ) -> np.ndarray | None:
@@ -676,36 +642,165 @@ def fret_sequence(digits: str, *, split: bool = False) -> list[str] | None:
     return shortest[0] if len(shortest) == 1 else None
 
 
-def suspect_patterns(emitted: "Emitted") -> list[str]:
-    """
-    Digit runs read as a fret that the piece itself argues against.
+# How many other notes a bar must print before what it plays is evidence about
+# anything. Two notes are a leap, not a range.
+BAR_EVIDENCE = 3
 
-    Nothing outside the music can settle `24`. The music can. A tab whose notes
-    live between frets 2 and 12 does not visit fret 24 five times, and its 2s and
-    4s number in the hundreds — so the joined reading being rarer than either
-    half of the split one is the tell. On the reference clip this picks out four
-    patterns and every one of them is a legato pair engraved without an arc,
-    while leaving `10` (95 times) and `12` (94 times) alone.
+
+@dataclass(frozen=True)
+class Suspect:
+    """One printing of a digit run whose own bar argues against the fret it spells."""
+
+    text: str
+    """What the digits spell as a single fret, such as `12`."""
+
+    split: list[str]
+    """The other reading, such as `["1", "2"]`."""
+
+    key: tuple[int, int, int]
+    """Which printing this is, so a verdict lands on it and not on the pattern."""
+
+    run: glyphs.Run
+
+    plays: tuple[int, int]
+    """The lowest and highest fret its bar plays, which is what argues."""
+
+    beside: tuple[float, ...] = ()
+    """
+    Where the lone numbers printed on other strings inside this run's box sit
+    along it, 0 at its left edge and 1 at its right. See `set_like_legato`.
+    """
+
+    @property
+    def set_like_legato(self) -> bool | None:
+        """
+        Whether the page sets this printing as a figure or as one number.
+
+        A legato figure is set with its last fret in the column and the earlier
+        digits hanging left, while a two-digit fret is one number centred in its
+        own column — so where a neighbouring string prints a lone number inside
+        this box says which of the two this is. Measured over the reference clip,
+        every printing the bar argues against has its neighbour at 0.65-0.75 of
+        the box, and every two-digit fret with a neighbour has it at 0.38-0.44,
+        with nothing between. `12` sits in both groups depending on the printing,
+        so the difference is the setting and not the shape of the digits.
+
+        None where no other string printed anything inside the box, which is the
+        page declining to say.
+        """
+        if not self.beside:
+            return None
+        seen = sorted(self.beside)[len(self.beside) // 2]
+        at = sum(len(fret) for fret in self.split[:-1])
+        figure = (at + len(self.text)) / 2 / len(self.text)
+        return abs(seen - figure) < abs(seen - 0.5)
+
+
+def run_key(page: int, run: glyphs.Run) -> tuple[int, int, int]:
+    """Names one printing of a run, stably across two passes over the same read."""
+    return (page, int(run.x0), int(run.baseline))
+
+
+def suspect_runs(
+    readings: list[Reading], shapes: Shapes, labels: dict[str, str]
+) -> list[Suspect]:
+    """
+    Printings read as a fret their own bar never goes near.
+
+    Nothing outside the music can settle `24`. The music can, and the question has
+    to be asked of the *bar* rather than of the piece. Asking it of the piece
+    settles `24` — the clip never visits fret 24 — and cannot settle `12`, because
+    the clip plays fret 12 ninety-odd times and only three printings of it are a
+    hammer-on from 1 to 2. A pattern is the wrong unit: the same two digits mean
+    different things in different bars, and one verdict for all of them is either
+    three wrong notes or ninety-one.
+
+    So: the joined reading is suspect where it falls further outside the range of
+    frets its bar plays than that range is wide, while every fret of the split
+    reading falls inside it. No threshold — the bar sets its own scale, and a bar
+    that roams the neck is hard to surprise while one sitting on frets 0 to 2 is
+    not. Other printings of the same digits are left out of the evidence: they are
+    exactly as contested as this one, and two `12`s in a bar would otherwise
+    vouch for each other.
+
+    Over the reference clip's 275 contested printings this picks out eight — the
+    five `24`s and the three `12`s — and nothing else. Both are legato pairs, and
+    an independent measurement agrees on the same eight: a legato figure is
+    engraved with its last fret in the column, so a neighbouring string's number
+    sits at 0.67-0.85 of the box against 0.38-0.50 for a real two-digit fret, and
+    those three `12`s are the only ones of the ninety-four set the legato way.
 
     This is a reason to look, not a reason to act. What comes back is the short
     list worth putting in front of a reader — a person, or a model that can see
     the bar — and never a decision on its own.
     """
-    counted: dict[int, int] = {}
-    for page in emitted.pages:
-        for text in page.texts:
-            bare = text.str.strip("()")
-            if bare.isdigit():
-                counted[int(bare)] = counted.get(int(bare), 0) + 1
+    by_pattern: dict[str, list[list[Suspect]]] = {}
+    for reading in readings:
+        found: dict[str, list[Suspect]] = {}
+        for staff in reading.staves:
+            edges = sorted(bar.x for one, bar in reading.barlines if one is staff)
+            printed: list[tuple[float, str, glyphs.Run]] = []
+            for one, run in reading.runs:
+                if one is not staff or run.truncated:
+                    continue
+                spelled = glyphs.spell(run, shapes.assignment, shapes.index_of, labels)
+                if spelled is not None and spelled.isdigit():
+                    printed.append(((run.x0 + run.x1) / 2, spelled, run))
 
-    out = []
-    for text in sorted(emitted.contested, key=lambda t: -emitted.contested[t]):
-        joined = fret_sequence(text)
-        split = fret_sequence(text, split=True)
-        if joined is None or split is None or len(joined) != 1:
-            continue  # already split, or nothing playable to compare against
-        if counted.get(int(text), 0) < min(counted.get(int(fret), 0) for fret in split):
-            out.append(text)
+            for cx, spelled, run in printed:
+                joined = fret_sequence(spelled)
+                split = fret_sequence(spelled, split=True)
+                if joined is None or split is None or len(joined) != 1:
+                    continue  # already split, or nothing playable to compare against
+                opened = [edge for edge in edges if edge <= cx]
+                closed = [edge for edge in edges if edge > cx]
+                plays = [
+                    int(fret)
+                    for other, spelled2, _ in printed
+                    if spelled2 != spelled
+                    and (not opened or other >= max(opened))
+                    and (not closed or other < min(closed))
+                    for fret in (fret_sequence(spelled2) or [])
+                ]
+                if len(plays) < BAR_EVIDENCE:
+                    continue
+                low, high = min(plays), max(plays)
+                outside = max(low - int(spelled), int(spelled) - high, 0)
+                if outside <= high - low:
+                    continue
+                if not all(low <= int(fret) <= high for fret in split):
+                    continue
+                width = run.x1 - run.x0
+                beside = tuple(
+                    (other - run.x0) / width
+                    for other, spelled2, run2 in printed
+                    if run2 is not run
+                    and len(spelled2) == 1
+                    and abs(run2.baseline - run.baseline) > staff.spacing * SAME_STRING_TOL
+                    and run.x0 <= other <= run.x1
+                )
+                found.setdefault(spelled, []).append(
+                    Suspect(
+                        text=spelled,
+                        split=split,
+                        key=run_key(reading.page.index, run),
+                        run=run,
+                        plays=(low, high),
+                        beside=beside,
+                    )
+                )
+        for text, hits in found.items():
+            by_pattern.setdefault(text, []).append(hits)
+
+    # Commonest pattern first, and within one pattern a printing from each system
+    # in turn, so anything shown only the first few sees different bars.
+    out: list[Suspect] = []
+    for text in sorted(by_pattern, key=lambda t: -sum(len(q) for q in by_pattern[t])):
+        queues = by_pattern[text]
+        depth = 0
+        while any(len(queue) > depth for queue in queues):
+            out.extend(queue[depth] for queue in queues if len(queue) > depth)
+            depth += 1
     return out
 
 
@@ -1079,15 +1174,18 @@ def emit(
     readings: list[Reading],
     shapes: Shapes,
     labels: dict[str, str],
-    legato: Collection[str] = (),
+    legato: Collection[tuple[int, int, int]] = (),
 ) -> Emitted:
     """
     Build page primitives, reporting what could not be spelled or attached.
 
-    `legato` names printed digit strings to read as a legato pair rather than as
-    the one fret they also spell — `{"24"}` makes every printed `24` a hammer-on
-    from 2 to 4. Nothing in the ink can decide that (see `fret_sequence`), so it
-    is a caller's to decide and it is recorded in what comes back.
+    `legato` names *printings* — `run_key` values — to read as a legato pair
+    rather than as the one fret their digits also spell. Naming the digits
+    instead would be the wrong unit: this clip prints `12` ninety-four times and
+    three of them are a hammer-on from 1 to 2, so one verdict for all of them is
+    wrong either three times or ninety-one. Nothing in the ink can decide it (see
+    `fret_sequence`), so it is a caller's to decide, and it is recorded in what
+    comes back.
     """
     pages: list[primitives.PagePrimitives] = []
     unspelled = 0
@@ -1147,7 +1245,7 @@ def emit(
                 cut = False
                 if spelled.isdigit() and len(_readings_of(spelled)) > 1:
                     contested[spelled] = contested.get(spelled, 0) + 1
-                    cut = spelled in legato
+                    cut = run_key(reading.page.index, run) in legato
                     if cut:
                         split[spelled] = split.get(spelled, 0) + 1
                 emitter.add_run(run, spelled, split=cut)

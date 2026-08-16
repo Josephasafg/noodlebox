@@ -319,32 +319,38 @@ def _read_music(job: Job, labels: dict[str, str]) -> pipeline.Emitted:
     Build the score, asking about the runs the reading itself argues against.
 
     A run of digits that spells a playable fret is usually that fret, and nothing
-    in the ink separates `24` from a hammer-on from 2 to 4. `suspect_patterns`
-    finds the handful where the piece's own fret histogram disagrees with the
-    reading — four on the reference clip, and all four are legato pairs — and a
-    vision model is asked about those and only those, one question per pattern.
+    in the digits separates `24` from a hammer-on from 2 to 4. Two things outside
+    them do, and a printing is only split where both say so.
 
-    Without a model, or where it is not sure, the fret reading stands. This is
-    the only place a model may change a note rather than name a shape, so it may
-    only overturn, never decide, and only over the short list.
+    `suspect_runs` finds the printings whose own bar never goes near the fret they
+    read as — eight on the reference clip — and each of those carries the second
+    measurement with it: whether the page sets it as a legato figure, with its last
+    fret in the column, or as one number centred in its own. The two are measured
+    from different things and agree on all eight, which is what makes acting on
+    them safe; where they disagree the reading stands.
+
+    A vision model is asked only where no other string printed anything inside the
+    run, so the column has nothing to say. It is not asked to confirm the rest:
+    measured against Qwen 2.5-VL-72B it reads `24` correctly and `12` wrongly at
+    every crop size, describing bars rather than digits — it is judging which fret
+    is plausible, which is the question the bar has already answered better.
     """
     assert job.shapes is not None
     emitted = pipeline.emit(job.readings, job.shapes, labels)
+    suspects = pipeline.suspect_runs(job.readings, job.shapes, labels)
+    if not suspects:
+        return emitted
+
+    legato = {one.key for one in suspects if one.set_like_legato}
+    unset = [one for one in suspects if one.set_like_legato is None]
     namer = namer_mod.Namer.from_env()
-    if namer is None:
-        return emitted
-
-    patterns = pipeline.suspect_patterns(emitted)
-    if not patterns:
-        return emitted
-
-    job.stage = "checking the notes that could be read two ways"
-    jobs = namer_mod.build_run_jobs(job.readings, job.shapes, labels, patterns, namer.exemplars)
-    try:
-        legato = {out.text for out in namer.read_runs(jobs) if out.legato}
-    except Exception as problem:  # noqa: BLE001 - a check must never fail the import
-        print(f"tabvideo: could not check contested runs: {problem}", file=sys.stderr)
-        return emitted
+    if unset and namer is not None:
+        job.stage = "checking the notes that could be read two ways"
+        jobs = namer_mod.build_run_jobs(job.readings, unset, namer.exemplars)
+        try:
+            legato |= {key for out in namer.read_runs(jobs) if out.legato for key in out.keys}
+        except Exception as problem:  # noqa: BLE001 - a check must never fail the import
+            print(f"tabvideo: could not check contested runs: {problem}", file=sys.stderr)
     return pipeline.emit(job.readings, job.shapes, labels, legato=legato) if legato else emitted
 
 

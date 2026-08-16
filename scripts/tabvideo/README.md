@@ -249,39 +249,61 @@ one-digit frets, where centre and last-fret differ by less than the parser's
 tolerance, and drifts out of reach as the figure gets wider — 96 of 99, failing
 exactly on `1719` and `181618`.
 
-### The last case only a reader can settle
+### The last case: two digits that spell a fret and a figure alike
 
 `24` is fret 24, and equally a hammer-on from 2 to 4. Both are on the fretboard,
-so fewest-tokens takes the fret, and on this clip that is wrong five times.
+so fewest-tokens takes the fret, and on this clip that is wrong five times. `12`
+is worse: the clip prints it 94 times, 91 of them really fret 12 and three of them
+a hammer-on from 1 to 2. So there is no answer to give for the *pattern* — one
+verdict for `12` is wrong either three times or ninety-one. The unit has to be the
+printing.
 
-Nothing in the ink decides it — but the piece does. A tab whose notes live between
-frets 2 and 12 does not visit fret 24 five times while playing hundreds of 2s and
-4s, so `suspect_patterns` flags a contested reading whose joined fret is rarer
-than either half of its split one. On the reference clip that is four patterns out
-of the twenty contested, and it leaves `10` (95 times) and `12` (94 times) alone.
+Two measurements settle it, and a printing is split only where both agree.
 
-Those four, and only those, go to the vision model as one question each: a whole
-bar rendered with the digits outlined, and "the single fret 24, or the frets 2
-then 4 played as a legato pair?". The posture is inverted from shape naming
-deliberately. There, nothing is known and agreement produces a name. Here the
-fret reading is already right 270 times in 275, so the model may only *overturn*:
-one look saying "one number", one look unsure, a dead endpoint, a spent budget —
-all leave the note as it was. That keeps the blast radius to a pattern the piece's
-own histogram already argued against.
+**Its bar.** A bar that lives on frets 0 to 2 does not contain a fret 12. So a
+printing is suspect where its joined reading falls further outside the range of
+frets its bar plays than that range is wide, while every fret of the split reading
+falls inside it. No threshold — the bar sets its own scale, and a bar that roams
+the neck is hard to surprise. Other printings of the same digits are left out of
+the evidence, or two `12`s in one bar would vouch for each other, which on this
+clip they would: both are the hammer-on. Over 275 contested printings this picks
+out eight, the five `24`s and the three `12`s, and nothing else.
 
-Measured against Qwen 2.5-VL-72B on the reference clip, and stable over three
-runs: `24` split, unanimous over three different bars ("bar with repeated 4-2
-legato pairs"); `18`, `19` and `20` left alone, each correctly ("bar with high
-frets, including 18, 17, 16, and 19"). Fret 24 leaves the histogram entirely and
-five more hammer-ons appear.
+**Its column.** A legato figure is set with its last fret in the column, so a lone
+number on a neighbouring string inside the box lands where that fret is rather
+than in the middle. All eight suspect printings have their neighbour at 0.65–0.75
+of the box; all 21 unsuspected two-digit frets with a neighbour have it at
+0.38–0.44. Nothing in between, and `12` appears in both groups depending on the
+printing — so what separates them is the setting, not the shape of the digits.
 
-The first version of that prompt returned nothing but abstentions while
-describing the bar accurately — one answer read "notes mostly low on the neck,
-with a 24 and a 4-2 legato" and then set `certain` false. It had been told that
-hesitation was the safe answer once too often. Telling it instead that a
-description which already answers the question is not an uncertain one, and
+The two are measured from different things and agree on all eight, which is what
+makes acting on them safe. Where they disagree, the fret reading stands.
+
+A vision model is asked only where nothing is printed beside the run, so the
+column has nothing to say. It is not asked to confirm the rest, and that is a
+measured decision rather than a saving: against Qwen 2.5-VL-72B it reads `24`
+correctly and `12` wrongly at every crop from 4 to 20 staff spaces, and its own
+descriptions say why — "bar with notes at frets 0, 12, and 1", "bar with repeated
+4-2 legato pairs". It is judging which fret is plausible, not reading how the
+digits are set, and plausibility is the question the bar has already answered
+better. An earlier version of this shortlisted patterns and let the model decide
+them; it split `24` correctly and would have blocked all three `12`s.
+
+The prompt is still worth recording. Its first version returned nothing but
+abstentions while describing the bar accurately — one answer read "notes mostly
+low on the neck, with a 24 and a 4-2 legato" and then set `certain` false. It had
+been told that hesitation was the safe answer once too often. Telling it instead
+that a description which already answers the question is not an uncertain one, and
 naming the specific evidence to look for, is what turned three abstentions into
 three agreeing answers.
+
+### What is not on the page cannot be read
+
+Bar 4 of the reference clip plays `4 2` on the D string and means `4p2`; the
+engraver drew no arc over it, though the same figure a string above has one. There
+is nothing in the ink to find. The reader prints the two notes it can see and says
+nothing about a slur, which is the only honest reading — inferring one from the
+bar above is the kind of guess that becomes a wrong note somewhere else.
 
 ## Names are remembered
 

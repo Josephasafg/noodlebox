@@ -224,19 +224,22 @@ class RunJob:
     split: list[str]
     """The other reading, such as `["2", "4"]`."""
     count: int
-    """How many times the pattern occurs, which is the blast radius of an error."""
+    """How many printings this decides, which is the blast radius of an error."""
     bars: list[bytes] = field(default_factory=list)
     """PNG renders, one per printing, each with the digits outlined."""
+    keys: list[tuple[int, int, int]] = field(default_factory=list)
+    """The printings a verdict applies to — never every printing of the digits."""
 
 
 @dataclass(frozen=True)
 class RunOutcome:
-    """Whether a contested pattern is really a legato pair."""
+    """Whether some printings of a contested pattern are really a legato pair."""
 
     text: str
     legato: bool
     reason: str
     answers: list[Answer] = field(default_factory=list)
+    keys: list[tuple[int, int, int]] = field(default_factory=list)
 
 
 def _encode(image: np.ndarray | None) -> bytes | None:
@@ -271,32 +274,42 @@ def build_jobs(
 
 def build_run_jobs(
     readings: list[pipeline.Reading],
-    shapes: pipeline.Shapes,
-    labels: dict[str, str],
-    patterns: list[str],
+    suspects: list[pipeline.Suspect],
     exemplars: int = DEFAULT_EXEMPLARS,
 ) -> list[RunJob]:
     """
-    Render the bars where a contested pattern was printed, commonest first.
+    Render the bars behind each shortlist, commonest pattern first.
+
+    Suspect printings of the same digits are asked about together, because they
+    are the same question and asking it once is cheaper. What the answer applies
+    to is still only those printings: every other printing of the same digits sat
+    in a bar that had nothing to say against it, and is left as the fret it reads.
 
     Different printings rather than one printing looked at repeatedly, same as
     for shapes: three views of one bar is one observation three times, and a
-    disagreement between three bars is the signal that the pattern is not always
-    the same thing — which is exactly when it must be left alone.
+    disagreement between three bars is the signal that the digits are not always
+    the same thing — which is exactly when they must be left alone.
     """
-    found = pipeline.contested_runs(readings, shapes, labels, patterns)
+    grouped: dict[str, list[pipeline.Suspect]] = {}
+    for suspect in suspects:
+        grouped.setdefault(suspect.text, []).append(suspect)
+
     jobs: list[RunJob] = []
-    for text in patterns:
-        runs = found.get(text, [])
-        split = pipeline.fret_sequence(text, split=True)
-        if not runs or split is None:
-            continue
+    for text, hits in grouped.items():
         bars: list[bytes] = []
-        for run in runs[:exemplars]:
-            rendered = _encode(pipeline.run_context(readings, run))
+        for suspect in hits[:exemplars]:
+            rendered = _encode(pipeline.run_context(readings, suspect.run))
             if rendered is not None:
                 bars.append(rendered)
-        jobs.append(RunJob(text=text, split=split, count=len(runs), bars=bars))
+        jobs.append(
+            RunJob(
+                text=text,
+                split=hits[0].split,
+                count=len(hits),
+                bars=bars,
+                keys=[suspect.key for suspect in hits],
+            )
+        )
     return jobs
 
 
@@ -566,21 +579,22 @@ class Namer:
         budget: all of them leave the reading alone, which is the answer that is
         usually right anyway.
 
-        The asymmetry is what keeps the blast radius small. A pattern occurring
-        five times risks five notes if this is wrong, and only ever a pattern the
-        piece's own fret histogram already argued against.
+        The asymmetry is what keeps the blast radius small. A verdict lands on
+        the suspect printings and no others — five notes if this is wrong, never
+        the ninety-four printings of `12` whose own bars said nothing against
+        them.
         """
         offered = [answer.label for answer in answers if answer.label is not None]
         if not offered or len(offered) < len(answers):
-            return RunOutcome(job.text, legato=False, reason="unsure", answers=answers)
+            return RunOutcome(job.text, False, "unsure", answers, job.keys)
         if len(set(offered)) > 1:
-            return RunOutcome(job.text, legato=False, reason="conflict", answers=answers)
+            return RunOutcome(job.text, False, "conflict", answers, job.keys)
         if offered[0] != "two notes":
-            return RunOutcome(job.text, legato=False, reason="one number", answers=answers)
-        return RunOutcome(job.text, legato=True, reason="agreed", answers=answers)
+            return RunOutcome(job.text, False, "one number", answers, job.keys)
+        return RunOutcome(job.text, True, "agreed", answers, job.keys)
 
     def read_runs(self, jobs: list[RunJob], on_progress=None) -> list[RunOutcome]:
-        """Decide which contested patterns are legato pairs rather than frets."""
+        """Decide which suspect printings are legato pairs rather than frets."""
         deadline = time.monotonic() + self.budget
         outcomes: list[RunOutcome] = []
         with ThreadPoolExecutor(max_workers=self.concurrency) as pool:

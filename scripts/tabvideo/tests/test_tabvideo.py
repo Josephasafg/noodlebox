@@ -729,38 +729,124 @@ def test_a_contested_fret_reads_as_a_legato_pair_when_told_to() -> None:
     assert [token.str for token in emitter.resolve()] == ["2", "4", "h"]
 
 
-def _played(frets: list[str], contested: dict[str, int]) -> pipeline.Emitted:
-    """A finished reading of a piece that played these frets."""
-    texts = [
-        primitives.Text(str=fret, x=float(i), y=0.0, fontSize=10.0, width=6.0)
-        for i, fret in enumerate(frets)
-    ]
-    page = primitives.PagePrimitives(
-        pageIndex=0, width=600.0, height=400.0, segments=[], texts=texts
+def _spelled(
+    notes: list[tuple[int, int, str]], barlines: tuple[int, ...] = (20, 780)
+) -> tuple[cli.Reading, pipeline.Shapes, dict[str, str]]:
+    """
+    A rendered system, with the labels that spell what was drawn on it.
+
+    Everything is laid out left to right, so putting the marks in order across the
+    page and the drawn characters in order gives the same sequence — which is what
+    lets a fixture name the clusters without a bank or a model.
+    """
+    page = render_system(notes, barlines=barlines)
+    reading = cli.Reading(frames.Page(index=0, start_s=0.0, end_s=1.0, image=page))
+    shapes = pipeline.find_shapes([reading])
+    drawn = "".join(text for _, _, text in sorted(notes, key=lambda note: note[1]))
+    found = sorted(shapes.every, key=lambda mark: mark.x0)
+    assert len(found) == len(drawn), "the fixture must draw one mark per character"
+    return reading, shapes, {str(shapes.label_of(m)): c for m, c in zip(found, drawn)}
+
+
+def test_a_printing_its_own_bar_argues_against_is_put_up_for_question() -> None:
+    """
+    A bar that lives on frets 0 to 2 does not contain a fret 12.
+
+    Nothing in the ink separates fret 12 from a hammer-on from 1 to 2 — the digits
+    are the same digits. The bar around them is not: this one plays 0, 1 and 2, so
+    the joined reading is a stranger in it while both halves of the split reading
+    are at home.
+    """
+    reading, shapes, labels = _spelled([(2, 100, "12"), (2, 200, "0"), (2, 260, "1"), (2, 320, "2")])
+
+    suspects = pipeline.suspect_runs([reading], shapes, labels)
+
+    assert [(s.text, s.split, s.plays) for s in suspects] == [("12", ["1", "2"], (0, 2))]
+
+
+def test_the_same_digits_are_left_alone_where_the_bar_plays_up_there() -> None:
+    """
+    Which is why the question is asked of the bar and not of the pattern.
+
+    The reference clip prints `12` ninety-four times; three of them are the
+    hammer-on and ninety-one are fret 12. One verdict for the pattern is wrong
+    either three times or ninety-one, so there is no pattern-wide answer to give.
+    """
+    reading, shapes, labels = _spelled([(2, 100, "12"), (2, 200, "9"), (2, 260, "17"), (2, 340, "16")])
+
+    assert pipeline.suspect_runs([reading], shapes, labels) == []
+
+
+def test_a_bar_with_almost_nothing_in_it_does_not_get_to_argue() -> None:
+    """Two notes are a leap, not a range, and say nothing about a third."""
+    reading, shapes, labels = _spelled([(2, 100, "12"), (2, 200, "0"), (2, 260, "1")])
+
+    assert pipeline.suspect_runs([reading], shapes, labels) == []
+
+
+def test_a_printing_set_with_its_last_fret_in_the_column_reads_as_a_figure() -> None:
+    """
+    The second measurement, and the one that settles the shortlist.
+
+    A legato figure is set with its last fret in the column and the earlier digits
+    hanging left, while a two-digit fret is one number centred in its own — so a
+    lone number on a neighbouring string lands in a different place inside the box
+    depending on which this is. Here it sits under the `2`.
+    """
+    reading, shapes, labels = _spelled(
+        [(2, 100, "12"), (1, 109, "0"), (2, 200, "0"), (2, 260, "1"), (2, 320, "2")]
     )
-    return pipeline.Emitted(pages=[page], unspelled=0, silent=0, contested=contested)
+
+    suspect = pipeline.suspect_runs([reading], shapes, labels)[0]
+
+    assert suspect.set_like_legato is True
 
 
-def test_only_the_frets_a_piece_argues_against_are_put_up_for_question() -> None:
+def test_a_printing_centred_in_its_own_column_is_left_as_the_fret_it_spells() -> None:
+    """The same bar, the same digits: only where the neighbour sits is different."""
+    reading, shapes, labels = _spelled(
+        [(2, 100, "12"), (1, 104, "0"), (2, 200, "0"), (2, 260, "1"), (2, 320, "2")]
+    )
+
+    suspect = pipeline.suspect_runs([reading], shapes, labels)[0]
+
+    assert suspect.set_like_legato is False
+
+
+def test_a_printing_with_nothing_beside_it_leaves_the_page_saying_nothing() -> None:
     """
-    Which contested runs are worth a second opinion, and which must be left alone.
+    No neighbour, no column, no second measurement — and so nothing to act on.
 
-    Nothing in the ink separates fret 24 from a hammer-on from 2 to 4. The piece
-    does: one that plays 2 and 4 constantly and reaches fret 24 once is telling
-    you which reading is the odd one. A `12` printed as often as everything else
-    is not — it occurs 94 times on the reference clip, and questioning it would
-    put 94 notes at risk to gain nothing.
+    This is the case a model is for. Everything else it is measured to be worse
+    at than the bar already is.
     """
-    played = ["2"] * 40 + ["4"] * 40 + ["12"] * 40 + ["24"]
+    reading, shapes, labels = _spelled([(2, 100, "12"), (2, 200, "0"), (2, 260, "1"), (2, 320, "2")])
 
-    suspect = pipeline.suspect_patterns(_played(played, {"24": 1, "12": 40}))
+    suspect = pipeline.suspect_runs([reading], shapes, labels)[0]
 
-    assert suspect == ["24"]
+    assert suspect.beside == ()
+    assert suspect.set_like_legato is None
 
 
-def test_a_pattern_with_no_second_reading_is_never_questioned() -> None:
-    """`7` is one fret and nothing else, so there is nothing to ask about."""
-    assert pipeline.suspect_patterns(_played(["7"], {"7": 1})) == []
+def test_a_verdict_lands_on_the_printing_and_not_on_the_digits() -> None:
+    """
+    Splitting one `12` must leave every other `12` in the piece as fret 12.
+
+    This is the whole reason a printing is the unit. The two here are the same two
+    digits in the same font; only the bar each sits in tells them apart, and only
+    the one that was asked about may change.
+    """
+    reading, shapes, labels = _spelled(
+        [(2, 100, "12"), (2, 200, "0"), (2, 260, "1"), (2, 320, "12")]
+    )
+    first = next(run for _, run in reading.runs if run.x0 < 150)
+
+    emitted = pipeline.emit([reading], shapes, labels, legato=[pipeline.run_key(0, first)])
+
+    printed = [text.str for text in emitted.pages[0].texts]
+    assert sorted(printed) == ["0", "1", "1", "12", "2", "h"]
+    assert printed.count("12") == 1, "the printing nobody asked about is still fret 12"
+    assert emitted.split == {"12": 1}
 
 
 # --- technique marks -------------------------------------------------------

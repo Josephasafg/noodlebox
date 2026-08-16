@@ -75,7 +75,9 @@ def _truth(shapes: pipeline.Shapes, path: Path | None) -> dict[int, str]:
     return human.recognise(shapes.centroids)
 
 
-def _census(emitted: pipeline.Emitted) -> tuple[list[str], list[str]]:
+def _census(
+    emitted: pipeline.Emitted, unsettled: list[pipeline.Suspect] = []
+) -> tuple[list[str], list[str]]:
     """
     What the reading came out as, and what looks wrong about it without a truth.
 
@@ -145,12 +147,16 @@ def _census(emitted: pipeline.Emitted) -> tuple[list[str], list[str]]:
             "  read as legato pairs rather than the fret they spell: "
             + ", ".join(f"{text} x{n}" for text, n in emitted.split.items())
         )
-    suspect = [t for t in pipeline.suspect_patterns(emitted) if t not in emitted.split]
-    if suspect:
+    if unsettled:
         complaints.append(
-            "these read as a fret the piece barely uses, while their legato reading "
-            "uses frets it plays constantly, and nothing settled it — check one bar "
-            "of each by eye: " + ", ".join(f"{t} x{emitted.contested[t]}" for t in suspect)
+            "these printings read as a fret their own bar never goes near, while "
+            "their legato reading uses frets it plays, and nothing settled them — "
+            "check each by eye: "
+            + ", ".join(
+                f"{s.text} on page {s.key[0]} at x{s.key[1]} (its bar plays "
+                f"{s.plays[0]}-{s.plays[1]})"
+                for s in unsettled
+            )
         )
     return lines, complaints
 
@@ -269,23 +275,35 @@ def main(argv: list[str] | None = None) -> int:
     labels.update({str(o.index): o.label for o in outcomes if o.label is not None})
     emitted = pipeline.emit(readings, shapes, labels)
 
-    patterns = pipeline.suspect_patterns(emitted)
-    if patterns:
-        run_jobs = namer_mod.build_run_jobs(readings, shapes, labels, patterns, namer.exemplars)
-        print(f"\nasking about {len(run_jobs)} contested digit patterns")
-        verdicts = namer.read_runs(run_jobs)
-        for verdict in verdicts:
-            shows = next((a.shows for a in verdict.answers if a.shows), "")
-            mark = "split" if verdict.legato else "left"
+    suspects = pipeline.suspect_runs(readings, shapes, labels)
+    legato = {one.key for one in suspects if one.set_like_legato}
+    if suspects:
+        print(f"\n{len(suspects)} printings their own bar argues against:")
+        for one in suspects:
+            set_as = {True: "a figure", False: "one number", None: "nothing beside it"}[
+                one.set_like_legato
+            ]
             print(
-                f"  {mark:<5} {verdict.text:<7} x{emitted.contested[verdict.text]:<4} "
-                f"({verdict.reason}) {shows[:60]}"
+                f"  {'split' if one.set_like_legato else 'left ':<5} {one.text:<7} "
+                f"page {one.key[0]} x{one.key[1]:<5} bar plays {one.plays[0]}-{one.plays[1]}, "
+                f"set like {set_as}"
             )
-        legato = {verdict.text for verdict in verdicts if verdict.legato}
+        unset = [one for one in suspects if one.set_like_legato is None]
+        if unset:
+            run_jobs = namer_mod.build_run_jobs(readings, unset, namer.exemplars)
+            print(f"\nasking about {len(unset)} the page sets no column for")
+            for verdict in namer.read_runs(run_jobs):
+                shows = next((a.shows for a in verdict.answers if a.shows), "")
+                print(
+                    f"  {'split' if verdict.legato else 'left ':<5} {verdict.text:<7} "
+                    f"x{len(verdict.keys):<4} ({verdict.reason}) {shows[:60]}"
+                )
+                if verdict.legato:
+                    legato |= set(verdict.keys)
         if legato:
             emitted = pipeline.emit(readings, shapes, labels, legato=legato)
 
-    lines, complaints = _census(emitted)
+    lines, complaints = _census(emitted, [s for s in suspects if s.key not in legato])
     print("\nwhat came out:")
     print("\n".join(lines))
     for complaint in complaints:
