@@ -223,14 +223,31 @@ cannot. `91` is no fret, so `911` has one short reading. A tie (`121` is a 12 th
 a 1, or a 1 then a 21) is reported unread. That recovered 114 hammer-ons, 7
 pull-offs and 14 previously unreadable runs.
 
-Where the frets of that figure are placed matters as much as finding them. The
-whole figure occupies one column of the engraving, and the note that is *struck*
-is its first fret — so that one goes where a single number would be, alongside the
-rest of the chord, and the frets it slurs into follow after. Spreading the frets
-across the run instead sets the struck note half a digit left of its own column,
-which is enough for the parser to hear it as an attack of its own: a strum of
+Where the frets of that figure are placed matters as much as finding them, and
+the engraving is precise about it: **a figure is set with its last fret in the
+column, the earlier ones hanging left of it.** Measured over the clip, a lone
+number printed on a neighbouring string inside a figure's box sits at the centre
+of that last fret, every family agreeing to a hundredth:
+
+| the figure's frets | e.g.     | neighbour sits at | that fret's centre |
+| ------------------ | -------- | ----------------- | ------------------ |
+| 1 digit + 1        | `57`     | 0.76 of the box (83 of them) | 0.75    |
+| 1 digit + 2        | `912`    | 0.64–0.66         | 0.67               |
+| 2 digits + 2       | `1719`   | 0.78              | 0.75               |
+| three of 2 digits  | `181618` | 0.86              | 0.83               |
+
+The note that is *struck*, though, is the figure's **first** fret. So leaving the
+frets where they are drawn puts the chord alongside the wrong one: a strum of
 `7655` whose top string hammers to 7 came out as a lone 5, then a chord of `765`
-with the 7 in it.
+with the 7 in it. The figure is shifted to put its first fret in the column, and
+the rest follow — a claim about time rather than ink, and the only place here
+where a note is moved off where it was printed. Of the clip's 99 legato figures
+printed inside a chord, 12 used to strum with their column and all 99 now do.
+
+Aligning on the box's centre instead is the tempting near-miss: it works for two
+one-digit frets, where centre and last-fret differ by less than the parser's
+tolerance, and drifts out of reach as the figure gets wider — 96 of 99, failing
+exactly on `1719` and `181618`.
 
 ### The last case only a reader can settle
 
