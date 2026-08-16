@@ -176,6 +176,16 @@ collected as technique marks by that geometry, never as characters. Renaming a
 shape the bank already claimed to know also *replaces* the wrong entry rather
 than leaving a tie beside it, so one correction heals every later video.
 
+**An unnamed technique shape always asks**, however rare it is. Both of the
+thresholds that decide whether an import can finish without a person weigh a
+shape by how many marks it covers, and that counts every mark as costing the
+same. It does not: a digit fragment left unnamed costs the one note it decorates,
+while the cluster the arcs and dashes fall into carries every hammer-on, pull-off
+and slide in the piece. On the reference clip that is 73 marks against 1900 —
+under 4%, so it slipped under the threshold, and the score came out with no
+articulation at all while nothing asked and nothing complained. Which shapes hold
+flat marks is already known, so those are exempt from the share.
+
 Slur arcs and slide dashes are wide and only a few pixels tall — the opposite of a
 digit — so they are collected separately from the glyph filters, which were
 measured against fragments that cluster into phantom notes. Claiming them also

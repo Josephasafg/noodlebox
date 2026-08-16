@@ -806,8 +806,20 @@ class _StubNamer:
 
 
 def _all_but_the_rarest(position: int, total: int) -> str | None:
-    """Read everything except the last shape, which is the one-off tail."""
+    """Read everything except the last shape, which is the fixture's arc cluster."""
     return None if position == total - 1 else "7"
+
+
+def _all_but_one_digit(position: int, total: int) -> str | None:
+    """
+    Read everything except one shape that decorates notes rather than being one.
+
+    Not the rarest, which is where the fixture's slur arcs and slide dashes land:
+    an unnamed technique shape always asks a person, however few marks it covers,
+    so declining that one is a naming screen by design rather than a tail left
+    unread. See `test_an_unnamed_technique_shape_asks_however_rare_it_is`.
+    """
+    return None if position == total - 2 else "7"
 
 
 def _with_namer(monkeypatch, namer) -> None:
@@ -835,13 +847,32 @@ def test_shapes_the_model_declines_are_left_unread_rather_than_guessed(
     Abstaining is the safe failure and must not stop the import: the notes it
     covered are reported unread, which is recoverable, and a guess would not be.
     """
-    _with_namer(monkeypatch, _StubNamer(_all_but_the_rarest))
+    _with_namer(monkeypatch, _StubNamer(_all_but_one_digit))
 
     job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
     payload = _await_state(client, job_id, "done", "naming")
 
     assert payload["state"] == "done"
     assert payload["unresolvedCount"] > 0, "the rest is admitted, not invented"
+
+
+def test_an_unnamed_technique_shape_asks_however_rare_it_is(
+    client: TestClient, monkeypatch
+) -> None:
+    """
+    Both finish thresholds weigh a shape by how many marks it covers, and that
+    counts every mark as costing the same. It does not: the cluster the slur arcs
+    and slide dashes fall into carries every hammer-on, pull-off and slide in the
+    piece, and on the reference clip it is 73 marks against 1900 — under 4%, so it
+    slipped under the threshold and the score came out with no articulation at all
+    while nothing asked and nothing complained.
+    """
+    _with_namer(monkeypatch, _StubNamer(_all_but_the_rarest))
+
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    payload = _await_state(client, job_id, "done", "naming")
+
+    assert payload["state"] == "naming", "an unnamed arc shape is worth a screen"
 
 
 def test_a_model_that_reads_almost_nothing_still_asks_a_person(
@@ -909,7 +940,7 @@ def test_what_the_model_read_is_remembered_for_the_next_video(
 
 
 def test_a_person_correcting_a_model_wins_in_the_bank(client: TestClient, monkeypatch) -> None:
-    _with_namer(monkeypatch, _StubNamer(_all_but_the_rarest))
+    _with_namer(monkeypatch, _StubNamer(_all_but_one_digit))
     first = client.post("/api/extract", json={"url": "https://example.com/one"}).json()["id"]
     _await_state(client, first, "done", "naming")
 

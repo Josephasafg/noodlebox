@@ -192,6 +192,28 @@ def _unresolved(job: Job) -> list[int]:
     ]
 
 
+def _technique_shapes(job: Job) -> set[int]:
+    """
+    Shapes holding slur arcs or slide dashes, which no share may speak for.
+
+    Both thresholds above weigh a shape by how many marks it covers, and that
+    counts every mark as costing the same. It does not. A digit fragment left
+    unnamed costs the one note it decorates; the cluster the arcs and dashes fall
+    into carries every hammer-on, pull-off and slide in the piece, and on the
+    reference clip it is 73 marks against 1900 — under 4%, so it slipped under
+    the threshold and the score came out with no articulation at all while
+    nothing asked and nothing complained.
+
+    Flat marks are collected apart from the glyphs precisely because they are
+    techniques rather than characters, so which shapes hold them is already
+    known. One of them unnamed is worth a naming screen however rare it is.
+    """
+    assert job.shapes is not None
+    return {
+        job.shapes.label_of(mark) for reading in job.readings for _, mark in reading.flat_marks
+    }
+
+
 def _read_shapes(job: Job) -> None:
     """
     Have a model name the shapes the bank did not recognise.
@@ -289,7 +311,11 @@ def _run(job: Job) -> None:
 
         unresolved = _unresolved(job)
         share = sum(job.shapes.counts[i] for i in unresolved) / max(1, sum(job.shapes.counts))
-        if job.auto:
+        techniques = _technique_shapes(job) & set(unresolved)
+        if techniques:
+            # Never left to a share. See `_technique_shapes`.
+            stop = True
+        elif job.auto:
             # A model read the shapes, so what is left is what it declined to
             # name. Those are reported unread rather than asked about, unless
             # there are so many that the read cannot be trusted.
