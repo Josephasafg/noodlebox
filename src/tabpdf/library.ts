@@ -179,6 +179,27 @@ export async function updateTab(entry: LibraryEntry, score: ParsedScore): Promis
   })
 }
 
+/**
+ * Give a stored tab a different name.
+ *
+ * The name is written to the score as well as to the list entry: every later
+ * write goes through `entryFor`, which takes the title from the score, so a name
+ * kept only on the entry would be undone by the next tempo change.
+ */
+export async function renameTab(id: string, title: string): Promise<void> {
+  await withStores('readwrite', async (meta, data) => {
+    // Both reads are issued before either is awaited, so the transaction is
+    // still open when they land.
+    const [entry, stored] = await Promise.all([
+      request(meta.get(id) as IDBRequest<LibraryEntry | undefined>),
+      request(data.get(id) as IDBRequest<StoredData | undefined>),
+    ])
+    if (!entry || !stored) return
+    meta.put({ ...entry, title })
+    data.put({ ...stored, score: { ...stored.score, title } })
+  })
+}
+
 export async function deleteTab(id: string): Promise<void> {
   await withStores('readwrite', (meta, data) => {
     meta.delete(id)

@@ -15,6 +15,7 @@ import {
   entryFor,
   listTabs,
   readTab,
+  renameTab,
   saveTab,
   titleFor,
   updateTab,
@@ -515,6 +516,35 @@ export function useScoreLibrary() {
     [entry, fail, persist],
   )
 
+  /**
+   * Rename a tab, in the library list and in the score itself.
+   *
+   * A tab read from a video is filed under the video's title, which is rarely
+   * what the song is called — so the name it arrived with is worth being able to
+   * correct without importing it again.
+   */
+  const rename = useCallback(
+    async (id: string, title: string) => {
+      const name = title.trim()
+      if (name.length === 0) return
+      try {
+        await renameTab(id, name)
+        setEntries(await listTabs())
+      } catch {
+        setError('That tab could not be renamed.')
+        setStatus('error')
+        return
+      }
+      // The open tab shows its own copy of the name, in the list and above the
+      // staff, so both have to follow.
+      if (entry?.id === id) {
+        setEntry((current) => (current ? { ...current, title: name } : current))
+        setScore((current) => (current ? { ...current, title: name } : current))
+      }
+    },
+    [entry],
+  )
+
   const remove = useCallback(
     async (id: string) => {
       try {
@@ -574,6 +604,7 @@ export function useScoreLibrary() {
     importUrl,
     open,
     remove,
+    rename,
     close,
     setBpm,
     setTuningShift,

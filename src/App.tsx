@@ -380,6 +380,7 @@ export function App() {
               setPlayFrom(0)
               void library.open(id)
             }}
+            onRename={(id, title) => void library.rename(id, title)}
             onRemove={(id) => void library.remove(id)}
             onDismissError={library.dismissError}
           />

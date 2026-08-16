@@ -7,6 +7,7 @@ import type { LibraryEntry } from '../../tabpdf/library'
 function open(overrides: Partial<Parameters<typeof LibraryBrowser>[0]> = {}) {
   const onImportUrl = vi.fn()
   const onImport = vi.fn()
+  const onRename = vi.fn()
   render(
     <LibraryBrowser
       entries={[]}
@@ -17,16 +18,31 @@ function open(overrides: Partial<Parameters<typeof LibraryBrowser>[0]> = {}) {
       onImport={onImport}
       onImportUrl={onImportUrl}
       onOpen={vi.fn()}
+      onRename={onRename}
       onRemove={vi.fn()}
       onDismissError={vi.fn()}
       {...overrides}
     />,
   )
   fireEvent.click(screen.getByLabelText('Tab library'))
-  return { onImportUrl, onImport }
+  return { onImportUrl, onImport, onRename }
 }
 
 afterEach(cleanup)
+
+const song = (over: Partial<LibraryEntry> = {}): LibraryEntry => ({
+  id: 'a',
+  title: 'Bold As Love',
+  artist: 'Jimi Hendrix',
+  bars: 19,
+  noteCount: 129,
+  pageCount: 4,
+  fileName: 'a.pdf',
+  addedAt: 1,
+  source: 'pdf',
+  version: 1,
+  ...over,
+})
 
 describe('importing a tab from a link', () => {
   it('hands over the pasted link, without the whitespace that comes with a paste', () => {
@@ -125,6 +141,7 @@ describe('importing a tab from a link', () => {
         onImport={vi.fn()}
         onImportUrl={vi.fn()}
         onOpen={vi.fn()}
+        onRename={vi.fn()}
         onRemove={vi.fn()}
         onDismissError={vi.fn()}
       />,
@@ -141,20 +158,6 @@ describe('importing a tab from a link', () => {
 })
 
 describe('telling two readings of one song apart', () => {
-  const song = (over: Partial<LibraryEntry>): LibraryEntry => ({
-    id: 'a',
-    title: 'Bold As Love',
-    artist: 'Jimi Hendrix',
-    bars: 19,
-    noteCount: 129,
-    pageCount: 4,
-    fileName: 'a.pdf',
-    addedAt: 1,
-    source: 'pdf',
-    version: 1,
-    ...over,
-  })
-
   it('labels each row with where it came from', () => {
     open({
       entries: [
@@ -177,5 +180,68 @@ describe('telling two readings of one song apart', () => {
     expect(screen.getAllByText(/Bold As Love/)).toHaveLength(2)
     expect(screen.getByText(/version 2/)).toBeInTheDocument()
     expect(screen.queryByText(/version 1/)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * A tab is filed under whatever its source called it — a video's own title, or
+ * a file name — which is often not the name of the song. Correcting that should
+ * not mean importing it again.
+ */
+describe('renaming a song', () => {
+  function startRename(overrides: Partial<Parameters<typeof LibraryBrowser>[0]> = {}) {
+    const handles = open({ entries: [song()], ...overrides })
+    fireEvent.click(screen.getByLabelText('Rename Bold As Love'))
+    return { ...handles, field: screen.getByLabelText('New name for Bold As Love') }
+  }
+
+  it('hands over the typed name, without the whitespace around it', () => {
+    const { onRename, field } = startRename()
+    fireEvent.change(field, { target: { value: '  Bold as Love  ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(onRename).toHaveBeenCalledWith('a', 'Bold as Love')
+  })
+
+  it('starts from the name the song already has, so a small fix is a small edit', () => {
+    const { field } = startRename()
+    expect((field as HTMLInputElement).value).toBe('Bold As Love')
+  })
+
+  it('will not save an empty name', () => {
+    const { onRename, field } = startRename()
+    fireEvent.change(field, { target: { value: '   ' } })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.submit(field)
+
+    expect(onRename).not.toHaveBeenCalled()
+  })
+
+  it('leaves the name alone when the edit is abandoned', () => {
+    const { onRename, field } = startRename()
+    fireEvent.change(field, { target: { value: 'Something else' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(onRename).not.toHaveBeenCalled()
+    expect(screen.getByText(/Bold As Love/)).toBeInTheDocument()
+  })
+
+  /**
+   * Escape is the reflex for backing out of a field, and it would otherwise
+   * close the whole library — losing the place as well as the edit.
+   */
+  it('abandons the edit on Escape without closing the library', () => {
+    const { onRename } = startRename()
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(onRename).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('New name for Bold As Love')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Tab library' })).toBeInTheDocument()
+  })
+
+  /** Opening the tab while typing its name would throw the edit away. */
+  it('does not offer to open the row while its name is being edited', () => {
+    startRename()
+    expect(screen.queryByText(/19 bars/)).not.toBeInTheDocument()
   })
 })

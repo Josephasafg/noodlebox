@@ -353,6 +353,77 @@
   }
 }
 
+.rename {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .rename:hover {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: var(--glass-border-soft);
+    color: var(--accent-lilac);
+  }
+}
+
+.renameForm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--glass-border-soft);
+  color: var(--ink);
+}
+
+.renameSave,
+.renameCancel {
+  flex: none;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.renameSave {
+  background: var(--accent-gradient);
+  color: #fff;
+  border: 1px solid transparent;
+}
+
+.renameSave:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.renameCancel {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink-pill);
+  border: 1px solid var(--glass-border-soft);
+}
+
 .confirm {
   display: inline-flex;
   gap: var(--space-1);

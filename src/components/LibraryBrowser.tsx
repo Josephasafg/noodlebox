@@ -23,6 +23,7 @@ interface Props {
   onImport: (file: File) => void
   onImportUrl: (url: string) => void
   onOpen: (id: string) => void
+  onRename: (id: string, title: string) => void
   onRemove: (id: string) => void
   onDismissError: () => void
 }
@@ -74,12 +75,16 @@ export function LibraryBrowser({
   onImport,
   onImportUrl,
   onOpen,
+  onRename,
   onRemove,
   onDismissError,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  /** The row being renamed, and the name being typed into it. */
+  const [renameId, setRenameId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
   const [url, setUrl] = useState('')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -97,8 +102,21 @@ export function LibraryBrowser({
   const close = useCallback(() => {
     setOpen(false)
     setConfirmId(null)
+    setRenameId(null)
     triggerRef.current?.focus()
   }, [])
+
+  const startRename = useCallback((item: LibraryEntry) => {
+    setConfirmId(null)
+    setRenameId(item.id)
+    setDraft(item.title)
+  }, [])
+
+  const commitRename = useCallback(() => {
+    const name = draft.trim()
+    if (renameId && name.length > 0) onRename(renameId, name)
+    setRenameId(null)
+  }, [draft, onRename, renameId])
 
   useEffect(() => {
     const hasFile = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
@@ -144,14 +162,16 @@ export function LibraryBrowser({
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        close()
-      }
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      // While a name is being typed, Escape belongs to the field: it abandons
+      // the edit rather than the whole library.
+      if (renameId) setRenameId(null)
+      else close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, close])
+  }, [open, close, renameId])
 
   const reading = status === 'reading'
 
@@ -278,66 +298,116 @@ export function LibraryBrowser({
               </div>
             ) : (
               <div className={styles.list}>
-                {entries.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`${styles.row} ${item.id === openId ? styles.rowOn : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className={styles.rowOpen}
-                      onClick={() => {
-                        onOpen(item.id)
-                        close()
-                      }}
+                {entries.map((item) => {
+                  const editing = renameId === item.id
+                  const confirming = confirmId === item.id
+                  return (
+                    <div
+                      key={item.id}
+                      className={`${styles.row} ${item.id === openId ? styles.rowOn : ''}`}
                     >
-                      <span className={styles.rowTitle}>
-                        {item.title}
-                        {item.artist && (
-                          <>
-                            {' '}
-                            <span className={styles.rowDash}>—</span>{' '}
-                            <span className={styles.rowArtist}>{item.artist}</span>
-                          </>
-                        )}
-                      </span>
-                      <span className={styles.rowMeta}>
-                        <span className={styles.rowSource}>{SOURCE_LABEL[item.source]}</span>
-                        {describe(item)}
-                      </span>
-                    </button>
-                    {confirmId === item.id ? (
-                      <span className={styles.confirm}>
-                        <button
-                          type="button"
-                          className={styles.confirmYes}
-                          onClick={() => {
-                            onRemove(item.id)
-                            setConfirmId(null)
+                      {editing ? (
+                        <form
+                          className={styles.renameForm}
+                          onSubmit={(e) => {
+                            e.preventDefault()
+                            commitRename()
                           }}
                         >
-                          Remove
-                        </button>
+                          <input
+                            className={styles.renameInput}
+                            type="text"
+                            autoFocus
+                            autoComplete="off"
+                            aria-label={`New name for ${item.title}`}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                          />
+                          <button
+                            type="submit"
+                            className={styles.renameSave}
+                            disabled={draft.trim().length === 0}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.renameCancel}
+                            onClick={() => setRenameId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.rowOpen}
+                            onClick={() => {
+                              onOpen(item.id)
+                              close()
+                            }}
+                          >
+                            <span className={styles.rowTitle}>
+                              {item.title}
+                              {item.artist && (
+                                <>
+                                  {' '}
+                                  <span className={styles.rowDash}>—</span>{' '}
+                                  <span className={styles.rowArtist}>{item.artist}</span>
+                                </>
+                              )}
+                            </span>
+                            <span className={styles.rowMeta}>
+                              <span className={styles.rowSource}>{SOURCE_LABEL[item.source]}</span>
+                              {describe(item)}
+                            </span>
+                          </button>
+                          {!confirming && (
+                            <button
+                              type="button"
+                              className={styles.rename}
+                              onClick={() => startRename(item)}
+                              aria-label={`Rename ${item.title}`}
+                            >
+                              ✎
+                            </button>
+                          )}
+                        </>
+                      )}
+                      {editing ? null : confirming ? (
+                        <span className={styles.confirm}>
+                          <button
+                            type="button"
+                            className={styles.confirmYes}
+                            onClick={() => {
+                              onRemove(item.id)
+                              setConfirmId(null)
+                            }}
+                          >
+                            Remove
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.confirmNo}
+                            onClick={() => setConfirmId(null)}
+                          >
+                            Keep
+                          </button>
+                        </span>
+                      ) : (
                         <button
                           type="button"
-                          className={styles.confirmNo}
-                          onClick={() => setConfirmId(null)}
+                          className={styles.remove}
+                          onClick={() => setConfirmId(item.id)}
+                          aria-label={`Remove ${item.title}`}
                         >
-                          Keep
+                          ✕
                         </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className={styles.remove}
-                        onClick={() => setConfirmId(item.id)}
-                        aria-label={`Remove ${item.title}`}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
