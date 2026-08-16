@@ -831,10 +831,23 @@ class _StaffTexts:
             # gesture. Which way it goes is in the frets, so no arc is needed —
             # and the clip engraves most of these without one, which is why they
             # came out as separate notes with no articulation at all.
+            #
+            # The whole figure occupies one column of the engraving, and the note
+            # that is struck is the first fret of it — so that one belongs where a
+            # single number would be, alongside the rest of the chord, and the
+            # frets it is slurred into follow after. Laying the frets out across
+            # the run instead sets the struck note half a digit left of its own
+            # column, which is far enough for the parser to read it as an attack
+            # of its own: a strum of `7655` with the top string hammering to 7
+            # came out as a lone 5, then a chord of `765` plus the 7. Shifting the
+            # figure so its first fret lands on the column says the same thing
+            # about the ink and the right thing about the time.
             at = 0
             made: list[_Note] = []
+            shift = (x0 + x1) / 2 - sum(span(0, len(frets[0]))) / 2
             for fret in frets:
-                made.append(self.note(fret, *span(at, at + len(fret)), baseline, height))
+                left, right = span(at, at + len(fret))
+                made.append(self.note(fret, left + shift, right + shift, baseline, height))
                 at += len(fret)
             for first, second in zip(made, made[1:]):
                 if first.fret is None or second.fret is None or first.fret == second.fret:

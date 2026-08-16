@@ -665,6 +665,23 @@ def test_a_descending_pair_in_one_run_is_a_pull_off() -> None:
     assert [token.str for token in texts] == ["5", "4", "p"]
 
 
+def test_the_struck_note_of_a_pair_sits_where_a_single_number_would() -> None:
+    """
+    The figure is one column, and the note that is struck is the first fret of it.
+
+    Laying the frets out across the run instead puts that note half a digit left
+    of its own column, which is enough for the parser to hear it as an attack of
+    its own: a strum of `7655` whose top string hammers to 7 came out as a lone
+    5, then a chord of 765 with the 7 in it. The rest of the figure follows the
+    column, which is what a hammer-on does in time.
+    """
+    run = _run_of(["5", "7"])
+    texts, _ = _emit_one("57", ["5", "7"])
+    struck, hammered = (t for t in texts if t.str.isdigit())
+    assert struck.x + struck.width / 2 == (run.x0 + run.x1) / 2
+    assert hammered.x + hammered.width / 2 > struck.x + struck.width / 2
+
+
 def test_a_reachable_two_digit_fret_survives() -> None:
     """Fewest tokens wins, so `12` stays fret 12 rather than becoming 1 then 2."""
     texts, _ = _emit_one("12", ["1", "2"])

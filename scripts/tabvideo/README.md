@@ -223,6 +223,15 @@ cannot. `91` is no fret, so `911` has one short reading. A tie (`121` is a 12 th
 a 1, or a 1 then a 21) is reported unread. That recovered 114 hammer-ons, 7
 pull-offs and 14 previously unreadable runs.
 
+Where the frets of that figure are placed matters as much as finding them. The
+whole figure occupies one column of the engraving, and the note that is *struck*
+is its first fret — so that one goes where a single number would be, alongside the
+rest of the chord, and the frets it slurs into follow after. Spreading the frets
+across the run instead sets the struck note half a digit left of its own column,
+which is enough for the parser to hear it as an attack of its own: a strum of
+`7655` whose top string hammers to 7 came out as a lone 5, then a chord of `765`
+with the 7 in it.
+
 ### The last case only a reader can settle
 
 `24` is fret 24, and equally a hammer-on from 2 to 4. Both are on the fretboard,
