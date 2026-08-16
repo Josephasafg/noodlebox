@@ -32,6 +32,7 @@ def _shapes(components: list[glyphs.Component], assignment: list[int]) -> pipeli
         index_of={id(component): index for index, component in enumerate(components)},
     )
 
+
 PAPER = 253
 RULE_GREY = 225
 INK = 20
@@ -325,6 +326,137 @@ def test_clusters_identical_shapes_and_separates_different_ones() -> None:
     assert assignment[2] != assignment[0]
 
 
+def test_members_of_a_shape_come_from_different_systems_first() -> None:
+    """
+    Agreement between exemplars only means something if they are different marks.
+
+    Three crops of one printing is one observation shown three times; one from
+    each of three systems is three, which is what makes a disagreement between
+    them evidence rather than noise.
+    """
+    readings = [
+        cli.Reading(
+            frames.Page(
+                index=index,
+                start_s=0.0,
+                end_s=1.0,
+                image=render_system([(0, 100, "7"), (2, 220, "7")]),
+            )
+        )
+        for index in range(3)
+    ]
+    shapes = pipeline.find_shapes(readings)
+    sevens = max(range(len(shapes)), key=lambda index: shapes.counts[index])
+
+    members = pipeline.shape_members(readings, shapes, sevens, limit=3)
+    owners = {id(pipeline._owners(readings)[id(member)]) for member in members}
+
+    assert len(members) == 3
+    assert len(owners) == 3, "one from each system before a second from any"
+
+
+def test_members_fall_back_to_one_system_when_that_is_all_there_is() -> None:
+    readings = [
+        cli.Reading(
+            frames.Page(
+                index=0,
+                start_s=0.0,
+                end_s=1.0,
+                image=render_system([(0, 100, "7"), (2, 220, "7")]),
+            )
+        )
+    ]
+    shapes = pipeline.find_shapes(readings)
+    sevens = max(range(len(shapes)), key=lambda index: shapes.counts[index])
+
+    members = pipeline.shape_members(readings, shapes, sevens, limit=3)
+
+    assert len(members) == 2, "two printings exist, so two are returned rather than a repeat"
+    assert members[0] is not members[1]
+
+
+def test_a_context_render_shows_the_whole_number_and_marks_one_glyph() -> None:
+    """
+    The context render is what makes a ten-pixel digit legible: the glyph beside
+    it fixes the size and the lines under it fix the baseline. It must therefore
+    contain the whole printed number, the staff, and an outline around the one
+    mark being asked about.
+    """
+    page = render_system([(1, 120, "12")])
+    reading = cli.Reading(frames.Page(index=0, start_s=0.0, end_s=1.0, image=page))
+    shapes = pipeline.find_shapes([reading])
+    run = next(run for _, run in reading.runs if len(run.components) == 2)
+    scale = 6
+
+    context = pipeline.shape_context([reading], run.components[0], scale=scale)
+
+    assert context is not None
+    # Both digits of the number, and the staff band, are inside the crop.
+    assert context.shape[1] >= (run.x1 - run.x0) * scale
+    staff = reading.staves[0]
+    band = (staff.bottom - staff.top) + 2 * staff.spacing * glyphs.BAND_MARGIN
+    assert context.shape[0] >= band * scale * 0.9
+    # Outlined in a colour, because the question is which of the two digits is
+    # being asked about — and a grey box got answered about the whole number.
+    assert context.ndim == 3 and context.shape[2] == 3
+    assert (context == np.array(pipeline.CONTEXT_OUTLINE, np.uint8)).all(axis=2).any(), (
+        "the mark in question is outlined"
+    )
+    # And the outline is the only colour on the page, so nothing else competes.
+    coloured = context[context[:, :, 0] != context[:, :, 2]]
+    assert len(coloured) > 0
+    assert (coloured == np.array(pipeline.CONTEXT_OUTLINE, np.uint8)).all()
+    assert shapes.label_of(run.components[0]) != shapes.label_of(run.components[1])
+
+
+def test_a_context_render_leaves_out_the_note_on_the_next_string() -> None:
+    """
+    Six strings share a staff, so a note one string away sits directly above the
+    mark being asked about. Rendering the whole staff band put it in frame and it
+    was read as part of the same number: a `4` with a `2` above it came back as
+    "a 4 sitting below a 2", and the shape — 123 marks, 5% of the reference clip
+    — went unnamed. Worse, once the prompt acknowledged fused digits at all, the
+    pair was confidently named `24`.
+
+    A number fills about three quarters of the string spacing, so the clear air
+    between two strings' notes is narrow but real, and the crop has to stay
+    inside it.
+    """
+    page = render_system([(1, 120, "2"), (2, 120, "4")])
+    reading = cli.Reading(frames.Page(index=0, start_s=0.0, end_s=1.0, image=page))
+    upper, lower = sorted(
+        (run for _, run in reading.runs), key=lambda run: min(m.y0 for m in run.components)
+    )
+    scale = 6
+
+    context = pipeline.shape_context([reading], lower.components[0], scale=scale)
+
+    assert context is not None
+    # Read the red channel: the page is grey so every channel carries it, while
+    # the outline is pure red and reads as paper here instead of as a dark mark.
+    # Staff lines print at 225 and digits far darker.
+    ink = context[:, :, 2]
+    staff = reading.staves[0]
+    crop_top = staff.top - staff.spacing * glyphs.BAND_MARGIN
+    where = upper.components[0]
+    rows = slice(int((where.y0 - crop_top) * scale), int((where.y1 - crop_top + 1) * scale))
+    assert ink[rows].size > 0, "the other string's note is inside the crop"
+    assert ink[rows].min() > 160, "but nothing of it is left to read"
+    # The staff still reaches well past this number, which is the whole point:
+    # the room and the lines are what make a ten-pixel digit legible.
+    assert context.shape[0] > (max(m.y1 for m in lower.components) - where.y0) * scale
+
+
+def test_a_context_render_declines_rather_than_raising_for_a_stray_mark() -> None:
+    """A component from nowhere has no staff and no run, so there is nothing to show."""
+    stray = glyphs.Component(x0=0, y0=0, x1=3, y1=3, template=np.zeros((20, 20), np.float32))
+    page = render_system([(1, 120, "7")])
+    reading = cli.Reading(frames.Page(index=0, start_s=0.0, end_s=1.0, image=page))
+
+    assert pipeline.shape_context([reading], stray) is None
+    assert pipeline.component_crop([reading], stray) is None
+
+
 def test_emits_only_staff_lines_each_with_one_shared_extent() -> None:
     """
     Ruled clutter above the staff must not reach the parser.
@@ -336,12 +468,19 @@ def test_emits_only_staff_lines_each_with_one_shared_extent() -> None:
     """
     page = render_system(
         [(1, 120, "7"), (4, 300, "9")],
-        clutter=((60, 100, 700), (76, 100, 700), (92, 100, 700), (106, 100, 700), (120, 100, 700), (138, 100, 700)),
+        clutter=(
+            (60, 100, 700),
+            (76, 100, 700),
+            (92, 100, 700),
+            (106, 100, 700),
+            (120, 100, 700),
+            (138, 100, 700),
+        ),
     )
     reading = cli.Reading(frames.Page(index=0, start_s=0.0, end_s=1.0, image=page))
     assert len(reading.staves) == 1, "the clutter must not read as a second staff"
 
-    emitted, _ = pipeline.emit([reading], pipeline.Shapes.of(list(reading.components)), {})
+    emitted = pipeline.emit([reading], pipeline.Shapes.of(list(reading.components)), {}).pages
 
     horizontals = [s for s in emitted[0].segments if abs(s.y1 - s.y0) < 0.01]
     assert len(horizontals) == 6, "only the six lines of the tab staff belong in the output"
@@ -402,8 +541,9 @@ def _tab_staff() -> staff_mod.Staff:
 
 def _mark(x0: int, x1: int, cy: int, height: int = 9, bow: float = 0.0) -> glyphs.Component:
     template = np.zeros((glyphs.TEMPLATE_SIZE, glyphs.TEMPLATE_SIZE), dtype=np.float32)
-    return glyphs.Component(x0=x0, y0=cy - height // 2, x1=x1, y1=cy - height // 2 + height,
-                            template=template, bow=bow)
+    return glyphs.Component(
+        x0=x0, y0=cy - height // 2, x1=x1, y1=cy - height // 2 + height, template=template, bow=bow
+    )
 
 
 def test_the_digits_of_a_two_digit_fret_are_read_as_one_number() -> None:
@@ -484,7 +624,9 @@ def test_a_lone_digit_with_clear_space_beside_it_is_read() -> None:
 def test_runs_come_back_in_reading_order() -> None:
     """Grouping by string must not reorder the music the parser is handed."""
     staff = _tab_staff()
-    runs = glyphs.group_runs([_mark(200, 207, 100), _mark(40, 47, 160), _mark(120, 127, 120)], staff)
+    runs = glyphs.group_runs(
+        [_mark(200, 207, 100), _mark(40, 47, 160), _mark(120, 127, 120)], staff
+    )
     assert [r.x0 for r in runs] == sorted(r.x0 for r in runs)
 
 
@@ -742,9 +884,9 @@ def test_a_flat_marks_own_curve_outranks_its_label() -> None:
     staff = _tab_staff()
     a = _mark(100, 107, int(staff.lines[2]))
     b = _mark(130, 137, int(staff.lines[2]))
-    shapes = _shapes([a, b], [0, 1])
 
     # Bowed but labelled as a dash: still a slur.
+    shapes = _shapes([a, b], [0, 1])
     emitter = pipeline._StaffTexts(staff, 0.0)
     emitter.add_run(glyphs.Run([a]), "7", shapes, {"0": "7", "1": "9"})
     emitter.add_run(glyphs.Run([b]), "9", shapes, {"0": "7", "1": "9"})

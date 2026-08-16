@@ -10,12 +10,15 @@ import type { TabPagePrimitives } from './types'
  * Vite proxies `/api` to it, which is what makes pasting a video link work without
  * anyone opening a terminal.
  *
- * A job stops at `naming` for shapes nobody has confirmed before. That is not a
- * gap waiting to be filled by a cleverer classifier: matching fret digits against
- * system fonts measured 38% on real video pixels and Tesseract 7-24%, because the
- * digits are around ten pixels tall and OCR needs about fourteen. Names confirmed
- * once are remembered, so the cost falls on the first video in a font and not the
- * rest.
+ * A job stops at `naming` for shapes nothing has been able to name. Where the
+ * service has a vision model configured it reads them first and the job runs
+ * straight through; without one, or for a shape the model would not commit to,
+ * the app asks. Either way the names are remembered, so the cost falls on the
+ * first video in a font and not the rest.
+ *
+ * A shape left unnamed is not a failure to paper over: the notes it covers are
+ * reported unread, which is recoverable, while a guessed name would be a wrong
+ * note everywhere that shape occurs.
  */
 
 /** The dev server proxies this; an explicit host lets the built app reach one. */
@@ -48,6 +51,8 @@ export interface VideoShape {
   label: string | null
   /** True when the name came from a previous video rather than this one. */
   remembered: boolean
+  /** True when a model read the name and nobody has checked it yet. */
+  suggested: boolean
 }
 
 export interface VideoJob {
@@ -62,10 +67,14 @@ export interface VideoJob {
   staves: number | null
   shapeCount: number | null
   rememberedCount: number | null
+  /** Shapes a vision model read for this video. */
+  autoNamedCount: number | null
   unresolvedCount: number | null
   shapes: VideoShape[] | null
   pages: TabPagePrimitives[] | null
   unreadCount: number | null
+  /** Slur arcs and slide dashes found but not identified, so dropped. */
+  silentTechniqueCount: number | null
 }
 
 const STATES: readonly VideoJobState[] = [
@@ -114,6 +123,7 @@ function shapesFrom(value: unknown): VideoShape[] | null {
       png: pngFrom(raw.png),
       label: typeof raw.label === 'string' ? raw.label : null,
       remembered: raw.remembered === true,
+      suggested: raw.suggested === true,
     }
   })
 }
@@ -132,12 +142,14 @@ function jobFrom(value: unknown): VideoJob {
     staves: count(raw.staves),
     shapeCount: count(raw.shapeCount),
     rememberedCount: count(raw.rememberedCount),
+    autoNamedCount: count(raw.autoNamedCount),
     unresolvedCount: count(raw.unresolvedCount),
     shapes: shapesFrom(raw.shapes),
     // Primitives get exactly the checks a file picked off disk gets. The parser
     // trusts its input to be numbers, so this is the only place that can enforce it.
     pages: raw.primitives === undefined ? null : pagesFrom(raw.primitives),
     unreadCount: count(raw.unreadCount),
+    silentTechniqueCount: count(raw.silentTechniqueCount),
   }
 }
 
@@ -176,13 +188,30 @@ async function call(
   return response.json()
 }
 
-/** Whether reading a video is possible at all right now. */
-export async function serverAvailable(): Promise<boolean> {
+export interface VideoServerHealth {
+  /** Whether a vision model will read the printed shapes without being asked. */
+  namesShapes: boolean
+  /** Which model does it, when one is configured and usable. */
+  model: string
+}
+
+/**
+ * Whether reading a video is possible at all right now, and how it will go.
+ *
+ * Null rather than throwing when nothing answers: not having the service is an
+ * ordinary state of the app, since everything but importing a video works
+ * without it.
+ */
+export async function serverHealth(): Promise<VideoServerHealth | null> {
   try {
-    const answer = await call('/health', { method: 'GET' }, PROBE_TIMEOUT_MS)
-    return record(answer).ok === true
+    const answer = record(await call('/health', { method: 'GET' }, PROBE_TIMEOUT_MS))
+    if (answer.ok !== true) return null
+    const vision = typeof answer.vision === 'object' && answer.vision !== null
+      ? (answer.vision as Record<string, unknown>)
+      : {}
+    return { namesShapes: vision.ready === true, model: text(vision.model) }
   } catch {
-    return false
+    return null
   }
 }
 

@@ -13,12 +13,15 @@ This runs as a local service, so reading a video is something the app does rathe
 than something you do first:
 
     pip install -r scripts/tabvideo/requirements.txt
+    cp .env.example .env          # optional: point it at a vision model
     npm run dev
 
 `npm run dev` starts the service alongside Vite, which proxies `/api` to it. Paste
-a video link into the library and it downloads, reads, and — for a font it has not
-seen — shows you the printed shapes to name. Everything else in the app works
-without the service running; only video links need it.
+a video link into the library and it downloads and reads it. With a vision model
+configured it reads the printed shapes too and the whole thing runs through to a
+tab with nothing to click; without one — or for a shape the model will not commit
+to — it shows you those shapes to name. Everything else in the app works without
+the service running; only video links need it.
 
 The service binds to the loopback interface and is not built to be exposed. It
 downloads whatever URL it is handed and spends real CPU doing it, so putting it on
@@ -40,13 +43,17 @@ connections and server faults but never this. Recovering means extracting again 
 a freshly signed URL, which the service does up to five times before giving up. If
 *every* video fails this way instead, yt-dlp is out of date: `pip install -U yt-dlp`.
 
-## Why naming the shapes is left to a person
+## Naming the shapes
 
-It is the one step here that is not automatic, so it is worth saying plainly that
-this is a measured limit and not an unfinished corner.
+Naming the shapes is the step that is not arithmetic, and one rule sits behind
+every decision about it: **a wrong name becomes a wrong note everywhere that
+shape occurs, while an unnamed one is counted and reported.** Those outcomes are
+not comparable — a gap is recoverable and wrong music is not — so nothing here
+guesses, and anything unsure abstains.
 
-Fret digits are around ten pixels tall in a 1080p panel. Measured against the
-shapes in the reference video that had been named by hand:
+Local recognition cannot clear that bar. Fret digits are around ten pixels tall
+in a 1080p panel, and measured against the shapes in the reference video that had
+been named by hand:
 
 | approach                                    | accuracy |
 | ------------------------------------------- | -------- |
@@ -60,8 +67,86 @@ clean synthetic digits shows why: Tesseract reaches 48% at 8px, 62% at 10px and
 also means a higher-resolution source would move these numbers, and is why the
 downloader asks for the largest stream it can get.
 
-A wrong name becomes a wrong note everywhere that shape occurs, while an unnamed
-one is counted and reported. So nothing guesses.
+What does clear it is a vision model shown the shape properly: the mark magnified
+with its aspect ratio intact, and the *same mark outlined inside the number and
+staff it belongs to*. The context is most of the difference — the glyph beside a
+digit fixes its size and the lines under it fix the baseline, which is much of
+what separates a `6` from a `5`. Point the reader at one and naming happens by
+itself; point it at nothing and the app asks, exactly as it always did.
+
+Two things keep that safe, both in `namer.py`:
+
+- **A name needs agreement across different printings.** Each shape is shown
+  several times, using marks from different systems where the video has them, and
+  a name is taken only when the answers agree. A disagreement abstains outright
+  rather than taking a majority: two readings of one mark is precisely when a
+  name is least trustworthy.
+- **Every failure is an abstention.** A timeout, a refused connection, prose
+  instead of JSON, a name outside the grammar, an impossible fret, a spent time
+  budget — each one leaves the shape unnamed rather than guessed at.
+
+### Pointing it at a model
+
+Any OpenAI-compatible vision endpoint serves; it is run here against a
+self-hosted Qwen 2.5-VL. Nothing is sent anywhere unless `TABVIDEO_VLM_URL` is
+set.
+
+Settings live in a `.env` beside the app rather than in a shell, because nothing
+here is started by hand — `npm run dev` starts it, and a variable that has to be
+exported first is one that is missing the first time and after every reboot. Copy
+`.env.example`, fill in two lines, and the app reads the shapes from then on:
+
+    TABVIDEO_VLM_URL=http://127.0.0.1:8000/v1
+    TABVIDEO_VLM_MODEL=Qwen/Qwen2.5-VL-32B-Instruct
+
+`.env.local` is read after `.env` and wins, which is where a token belongs; both
+are ignored by git. Anything already exported overrides both, so a one-off run
+against a different endpoint still works. The service says on startup which way
+it came up, and `/api/health` reports the same thing — the library says "reads
+the printed shapes itself" instead of "shapes to name" when a model is answering.
+
+| variable | default | meaning |
+| --- | --- | --- |
+| `TABVIDEO_VLM_URL` | *unset* | Base URL, e.g. `http://127.0.0.1:8000/v1`. Unset means shapes are named by hand. |
+| `TABVIDEO_VLM_MODEL` | *required with the URL* | Model name as served, e.g. `Qwen/Qwen2.5-VL-32B-Instruct`. |
+| `TABVIDEO_VLM_KEY` | `not-needed` | Bearer token, where the server wants one. |
+| `TABVIDEO_VLM_EXEMPLARS` | `3` | Independent looks per shape. |
+| `TABVIDEO_VLM_CONCURRENCY` | `4` | Requests in flight. |
+| `TABVIDEO_VLM_TIMEOUT` | `60` | Seconds per call. |
+| `TABVIDEO_VLM_BUDGET` | `300` | Seconds for the whole naming step; whatever is left abstains. |
+
+Where the model runs is only a URL, so a `kubectl port-forward` and an ingress
+are both just values here. Note what it changes about the service, though: it
+still binds loopback and is still not exposed, but it now makes *outbound* calls
+carrying crops of the notation — which is usually copyrighted — to whatever
+address it is given.
+
+Requests use constrained decoding (`guided_json`) where the server supports it
+and fall back to plain JSON after one refusal, so a server without it costs one
+call rather than every call.
+
+### Measure it before trusting it
+
+Nothing has to be run before the app; this is not a step in using it. But whether
+a given model can read a given font has an answer, and it is not the model's own
+confidence — nor is it obvious from the outside. Asked about the `2` inside a
+printed `12` while that mark was outlined in mid-grey, Qwen 2.5-VL 72B answered
+`12-`: it described the whole number and read the interrupted staff line as a
+slide dash. Three looks out of three agreed, so the consensus rule passed it
+through, and nothing downstream could have known. Outlining in red fixed it (see
+`CONTEXT_OUTLINE`) — the point being that the failure was silent, systematic, and
+found only by checking against known answers:
+
+    python3 -m scripts.tabvideo.calibrate_namer clip.mp4 --truth build/tab/labels.json
+
+That reads the same `.env`, bypasses the bank, scores the namer against labels
+named by hand for the same video, and prints what it got right, what it got wrong
+and what it declined, per shape and weighted by how many marks each covers.
+**The bar is zero wrong names.** Coverage is reported but is not the measure:
+abstentions cost one naming screen and are then remembered, while one wrong name
+is silently wrong music — and nothing downstream can tell a confident misreading
+from a correct one, which is why a model that produces any is one to replace
+rather than to tune around.
 
 ## Techniques have names too
 
@@ -114,7 +199,16 @@ neighbours cannot be read stays silent rather than guessing.
 What makes this bearable is that it does not repeat. One video is one font at one
 size, so every confirmed name is kept in `~/.noodlebox/glyph-bank.json` against the
 template it was confirmed for, and the next video in that font is read without
-anyone being asked anything.
+anyone being asked anything — and without anything being sent anywhere, since the
+bank is consulted before the model is.
+
+Names carry who gave them. A person and a model are not equally authoritative
+about what a glyph says, so a model's reading can never displace a name someone
+confirmed, or sit beside it as a tie that gets asked about for ever; a correction
+from a person overrides whatever was there, and also takes ownership of a name a
+model happened to get right, so no later run can overturn it. Banks written
+before any of this existed hold only hand-typed names, which is how they are
+read.
 
 Matching against a template a person already confirmed is the one recognition
 regime that measured cleanly: two renderings of a character land within 0.133 of
@@ -127,8 +221,9 @@ instead.
 The service is the way to read a video. This is for working on the reader itself,
 where the contact sheet and the intermediate files are what you want to look at.
 
-Recognition runs in two passes, because naming glyph shapes is the one step a
-machine should not guess at.
+Recognition runs in two passes here, with the names written into a file between
+them. The CLI does not call a model — automatic naming belongs to the service, and
+this is the path for looking at what recognition itself produced.
 
     # 1. find every distinct shape in the video
     python3 -m scripts.tabvideo.cli clip.mp4 --out build/tab
@@ -254,9 +349,15 @@ it is 0.3% now. Almost all of it was invented by the two mechanisms above.
 
 `pipeline.py` holds steps 1-4 with no opinion about who is driving them, so the
 service and the command line cannot drift apart. `fetch.py` downloads and vets the
-link, `bank.py` remembers confirmed names, and `server.py` is the HTTP surface the
-app talks to. It answers with primitives rather than a score, so `parse.ts` stays
-the only implementation of what a tab means.
+link, `bank.py` remembers confirmed names, `namer.py` reads the shapes the bank
+does not know, and `server.py` is the HTTP surface the app talks to. It answers
+with primitives rather than a score, so `parse.ts` stays the only implementation
+of what a tab means.
+
+Naming is deliberately not in `pipeline.py`. It is the one step with an outside
+dependency and a policy attached — who is allowed to decide what a glyph says —
+and keeping it out means the recognition path stays the same whether a model is
+configured or not.
 
 ## Limits
 
@@ -278,9 +379,18 @@ the only implementation of what a tab means.
   `12`. A part that lives high on the neck is where this would show.
 - **Repeats, D.C. and multi-voice parts** are not interpreted; systems are read
   in the order they appear.
+- **Automatic naming is only as good as the model reading it**, and agreement
+  across printings bounds that without eliminating it: a model that misreads the
+  same glyph the same way every time will agree with itself. That is what the
+  calibration run above is for, and why it gates the feature rather than
+  decorating it.
 
-Check the output before trusting it. `parseScore` reports `unreadCount`, and a
-number well above zero means shapes were left unlabelled or a pass went wrong.
+Check the output before trusting it — and more so when nobody named anything,
+since a run that asked no questions also gave no chance to notice a problem. The
+app says which of the two happened: a tab read this way carries a note that its
+shapes were named automatically, and another giving the number of printed numbers
+left unread. `parseScore` reports `unreadCount` too, and a number well above zero
+means shapes were left unnamed or a pass went wrong.
 
 A zero, though, proves nothing. `unreadCount` counts tokens the reader *found*
 and could not name; it cannot count a note that never reached it. While the ink

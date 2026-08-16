@@ -138,6 +138,17 @@
   background: rgba(255, 138, 101, 0.09);
 }
 
+/*
+ * A name read by a model rather than confirmed by anyone. Dashed rather than
+ * tinted: it has to read as unfinished beside `.cellKnown`, which means a name
+ * that was actually checked.
+ */
+.cellSuggested {
+  border-style: dashed;
+  border-color: rgba(255, 205, 120, 0.55);
+  background: rgba(255, 205, 120, 0.07);
+}
+
 .shape {
   display: block;
   height: 34px;

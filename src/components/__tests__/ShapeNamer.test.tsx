@@ -7,7 +7,15 @@ import type { VideoJob, VideoShape } from '../../tabpdf/videoServer'
 const PNG = 'aGVsbG8='
 
 function shape(over: Partial<VideoShape> = {}): VideoShape {
-  return { index: 0, count: 10, png: PNG, label: null, remembered: false, ...over }
+  return {
+    index: 0,
+    count: 10,
+    png: PNG,
+    label: null,
+    remembered: false,
+    suggested: false,
+    ...over,
+  }
 }
 
 function job(shapes: VideoShape[]): VideoJob {
@@ -22,10 +30,12 @@ function job(shapes: VideoShape[]): VideoJob {
     staves: 29,
     shapeCount: shapes.length,
     rememberedCount: shapes.filter((s) => s.remembered).length,
+    autoNamedCount: shapes.filter((s) => s.suggested).length,
     unresolvedCount: shapes.filter((s) => s.label === null).length,
     shapes,
     pages: null,
     unreadCount: null,
+    silentTechniqueCount: null,
   }
 }
 
@@ -101,6 +111,20 @@ describe('naming the shapes found in a video', () => {
   it('counts a remembered name towards the coverage straight away', () => {
     open([shape({ index: 0, count: 90, label: '7', remembered: true }), shape({ index: 1, count: 10 })])
     expect(screen.getByText(/90% of the notation/)).toBeInTheDocument()
+  })
+
+  it('fills in what a model read, and says it has not been checked', () => {
+    // A machine's reading and a name someone confirmed must not look alike: the
+    // whole point of showing this screen is that these are the ones to look at.
+    open([shape({ index: 0, label: '7', suggested: true })])
+    expect((boxFor(0) as HTMLInputElement).value).toBe('7')
+    expect(screen.getByTitle(/read automatically/i)).toBeInTheDocument()
+    expect(screen.getByText(/nobody has checked them/i)).toBeInTheDocument()
+  })
+
+  it('says nothing about automatic reading when there was none', () => {
+    open([shape({ index: 0, label: '7', remembered: true })])
+    expect(screen.queryByText(/nobody has checked them/i)).not.toBeInTheDocument()
   })
 
   it('will not build a tab with nothing named', () => {

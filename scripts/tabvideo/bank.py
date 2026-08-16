@@ -1,11 +1,17 @@
 """
 Remembered shape names, so a font only ever has to be read once.
 
-Naming shapes is the only step in the pipeline a person has to do, and the
-reason it is bearable is that it does not repeat: one video is one font at one
-size, and a second video from the same source prints the same glyphs. Keeping
-every confirmed name against the template it was confirmed for turns the second
-video into no work at all.
+Naming shapes is the step that does not come free, and the reason it is bearable
+is that it does not repeat: one video is one font at one size, and a second video
+from the same source prints the same glyphs. Keeping every confirmed name against
+the template it was confirmed for turns the second video into no work at all —
+and where `namer.py` read the shapes rather than a person, it means the model is
+asked once per font instead of once per video.
+
+Names carry who gave them for that reason. A person and a model are not equally
+authoritative about what a glyph says, so a model's reading can never displace or
+sit beside a name someone confirmed, while a correction from a person overrides
+whatever was there. See `remember`.
 
 This is also the only recognition here that is trustworthy. Matching a glyph
 against *system fonts* was measured at 38% on real video pixels, and Tesseract at
@@ -43,6 +49,13 @@ MATCH_MARGIN = 0.03
 # dozen shapes each, so this is many videos' worth.
 MAX_ENTRIES = 4000
 
+# Who confirmed a name. The distinction is not bookkeeping: a person looked at
+# the shape and a model read it, and where the two disagree the person is right
+# by definition. Entries written before this existed were all named by hand, so
+# a missing value reads as `HUMAN`.
+HUMAN = "human"
+MODEL = "model"
+
 
 def default_path() -> Path:
     """Where the bank lives, overridable so tests never touch the real one."""
@@ -78,6 +91,9 @@ class Entry:
 
     template: np.ndarray
 
+    by: str = HUMAN
+    """`HUMAN` or `MODEL`. Decides which entry wins where two disagree."""
+
 
 class Bank:
     """Confirmed shape names, matched by template distance."""
@@ -90,10 +106,13 @@ class Bank:
         return len(self.entries)
 
     def _nearest(self, template: np.ndarray) -> list[tuple[float, str]]:
-        return sorted(
-            (float(np.abs(entry.template - template).mean()), entry.label)
+        # Sorted by distance, and a human-confirmed entry ahead of a machine-read
+        # one at the same distance, so a person's answer wins any tie.
+        ranked = sorted(
+            (float(np.abs(entry.template - template).mean()), entry.by != HUMAN, entry.label)
             for entry in self.entries
         )
+        return [(distance, label) for distance, _, label in ranked]
 
     def recognise(self, centroids: list[np.ndarray]) -> dict[int, str]:
         """
@@ -119,9 +138,9 @@ class Bank:
             out[index] = label
         return out
 
-    def remember(self, centroids: list[np.ndarray], labels: dict[str, str]) -> int:
+    def remember(self, centroids: list[np.ndarray], labels: dict[str, str], by: str = HUMAN) -> int:
         """
-        Keep the names a person confirmed, and report how many were new.
+        Keep the names that were confirmed, and report how many were new.
 
         A name already covered by an equally-labelled entry is not stored again,
         so re-reading the same video does not grow the bank. Only shapes the
@@ -134,6 +153,13 @@ class Bank:
         happened when a bend arrow fused to a digit had been banked as the digit
         alone — and merely appending would leave two labels at one distance,
         which reads as a tie and gets asked about on every video for ever.
+
+        Where a machine's reading contradicts a name a person confirmed, the
+        person is right and nothing is written: a model must never be able to
+        evict, or quietly sit beside, an answer someone looked at the shape to
+        give. In the other direction a person's confirmation replaces whatever a
+        model had said, and also takes ownership of a name a model had guessed
+        correctly, so no later run can overturn it.
         """
         added = 0
         for index, centroid in enumerate(centroids):
@@ -149,26 +175,34 @@ class Bank:
                 for entry in self.entries
                 if float(np.abs(entry.template - template).mean()) <= MATCH_RADIUS
             ]
+            contradicted = [entry for entry in close if entry.label != label]
+            if by != HUMAN and any(entry.by == HUMAN for entry in contradicted):
+                continue
             # Contradictions go first, so a correction also clears the tie it
             # would otherwise leave behind. Distances between different
             # characters were measured to start at 0.189, well outside the
             # radius, so anything this close under another name is wrong.
             # Removal is by identity: comparing entries with == reaches their
             # numpy templates, which refuse to be a single truth value.
-            wrong = {id(entry) for entry in close if entry.label != label}
+            wrong = {id(entry) for entry in contradicted}
             if wrong:
                 self.entries = [entry for entry in self.entries if id(entry) not in wrong]
-            if any(entry.label == label for entry in close):
+            agreed = [entry for entry in close if entry.label == label]
+            if agreed:
+                if by == HUMAN:
+                    for entry in agreed:
+                        entry.by = HUMAN
                 continue
             if len(self.entries) >= MAX_ENTRIES:
                 break
-            self.entries.append(Entry(label=label, template=template.copy()))
+            self.entries.append(Entry(label=label, template=template.copy(), by=by))
             added += 1
         return added
 
     def save(self) -> None:
         payload = [
-            {"label": entry.label, "template": _encode(entry.template)} for entry in self.entries
+            {"label": entry.label, "template": _encode(entry.template), "by": entry.by}
+            for entry in self.entries
         ]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Written beside the target and moved into place, so an interrupted write
@@ -200,5 +234,8 @@ def load(path: Path | None = None) -> Bank:
         template = _decode(item["template"]) if isinstance(item.get("template"), str) else None
         if not isinstance(label, str) or template is None:
             continue
-        entries.append(Entry(label=label, template=template))
+        # Banks written before names could come from a model hold only names a
+        # person gave, so an absent or unrecognised value is a human one.
+        by = MODEL if item.get("by") == MODEL else HUMAN
+        entries.append(Entry(label=label, template=template, by=by))
     return Bank(entries=entries, path=target)

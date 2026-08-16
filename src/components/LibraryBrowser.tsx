@@ -16,6 +16,8 @@ interface Props {
   videoProgress?: number | null
   /** Whether videos can be read at all; null before it has been checked. */
   videoReady?: boolean | null
+  /** Whether a vision model names the printed shapes, so nothing is asked. */
+  videoNamesShapes?: boolean
   /** Re-check the service, since it can start and stop under the app. */
   onCheckVideoServer?: () => void
   onImport: (file: File) => void
@@ -67,6 +69,7 @@ export function LibraryBrowser({
   videoStage = null,
   videoProgress = null,
   videoReady = null,
+  videoNamesShapes = false,
   onCheckVideoServer,
   onImport,
   onImportUrl,
@@ -250,6 +253,11 @@ export function LibraryBrowser({
               <p className={styles.urlHint}>
                 A PDF link works. Video links need the extraction service, which is not running —
                 start it with npm run dev.
+              </p>
+            ) : videoNamesShapes ? (
+              <p className={styles.urlHint}>
+                A video link is read by the local extraction service, which reads the printed shapes
+                itself. Anything it is unsure of it leaves out and tells you about.
               </p>
             ) : (
               <p className={styles.urlHint}>

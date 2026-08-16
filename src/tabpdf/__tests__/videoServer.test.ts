@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   nameVideoShapes,
   readVideoJob,
-  serverAvailable,
+  serverHealth,
   startVideoExtraction,
 } from '../videoServer'
 import type { TabPagePrimitives } from '../types'
@@ -36,17 +36,36 @@ afterEach(() => {
 describe('finding the service', () => {
   it('reports it is there when health answers', async () => {
     vi.stubGlobal('fetch', respond({ ok: true }))
-    expect(await serverAvailable()).toBe(true)
+    expect(await serverHealth()).toEqual({ namesShapes: false, model: '' })
   })
 
   it('reports it is absent rather than throwing when nothing answers', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('refused')))
-    expect(await serverAvailable()).toBe(false)
+    expect(await serverHealth()).toBeNull()
   })
 
   it('reports it is absent when something else is on the port', async () => {
     vi.stubGlobal('fetch', respond({ hello: 'not the tab reader' }))
-    expect(await serverAvailable()).toBe(false)
+    expect(await serverHealth()).toBeNull()
+  })
+
+  it('says when a model will name the printed shapes', async () => {
+    // What the library promises before an import depends on this: a tab
+    // straight away, or a screen of shapes to name.
+    vi.stubGlobal(
+      'fetch',
+      respond({ ok: true, vision: { configured: true, ready: true, model: 'qwen-vl' } }),
+    )
+    expect(await serverHealth()).toEqual({ namesShapes: true, model: 'qwen-vl' })
+  })
+
+  it('does not promise automatic naming for an endpoint that cannot be used', async () => {
+    // Configured but broken must read as manual, since manual is what happens.
+    vi.stubGlobal(
+      'fetch',
+      respond({ ok: true, vision: { configured: true, ready: false, problem: 'no openai' } }),
+    )
+    expect(await serverHealth()).toEqual({ namesShapes: false, model: '' })
   })
 })
 

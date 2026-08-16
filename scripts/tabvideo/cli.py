@@ -104,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     labels = json.loads(args.labels.read_text(encoding="utf-8"))
-    pages, unspelled = pipeline.emit(readings, shapes, labels)
+    emitted = pipeline.emit(readings, shapes, labels)
+    pages, unspelled = emitted.pages, emitted.unspelled
     named = sum(1 for value in labels.values() if value)
     total_texts = sum(len(page.texts) for page in pages)
     out_path = args.out / "primitives.json"

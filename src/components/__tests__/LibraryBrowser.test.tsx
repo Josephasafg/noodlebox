@@ -98,6 +98,20 @@ describe('importing a tab from a link', () => {
     expect(screen.getByText(/npm run dev/i)).toBeInTheDocument()
   })
 
+  /**
+   * The two ways an import goes are a tab straight away and a screenful of
+   * shapes to name, and which one it will be is knowable before starting.
+   */
+  it('says the shapes will be named for you when a model is configured', () => {
+    open({ videoReady: true, videoNamesShapes: true })
+    expect(screen.getByText(/reads the printed shapes itself/i)).toBeInTheDocument()
+  })
+
+  it('says the shapes are yours to name when no model is configured', () => {
+    open({ videoReady: true })
+    expect(screen.getByText(/shapes to name once per font/i)).toBeInTheDocument()
+  })
+
   it('re-checks the service each time the library is opened', () => {
     const onCheckVideoServer = vi.fn()
     render(

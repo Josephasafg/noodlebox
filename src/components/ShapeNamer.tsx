@@ -25,13 +25,12 @@ const ALLOWED = /^(\d{1,2}([hp]\d{0,2}|-{1,2}|~|b)?|-{1,2}\d{0,2}|~\d{0,2}|[xX()
 /**
  * Naming the shapes found in a video.
  *
- * This is the one step a machine does not do, and it is here rather than in a
- * file because the alternative was a terminal. It is not a placeholder for a
- * classifier that has not been written: matching these glyphs against system
- * fonts measured 38% on real video pixels and Tesseract 7-24%, since fret digits
- * are around ten pixels tall and OCR wants about fourteen. A wrong name becomes a
- * wrong note everywhere that shape occurs, so an empty box is the better answer
- * whenever the shape is not clearly a number.
+ * This opens when something is left to name: either no vision model is
+ * configured for the reader, or one was and it would not commit to these shapes.
+ * A name it did read is filled in but marked as a suggestion, because it has not
+ * been checked by anyone and a wrong name becomes a wrong note everywhere that
+ * shape occurs — an empty box is the better answer whenever a shape is not
+ * clearly a number, since an empty one is counted and reported.
  *
  * Shapes are listed commonest first and the running total says how much of the
  * notation is covered, because the tail is long — mostly slur and beam fragments —
@@ -72,6 +71,7 @@ export function ShapeNamer({ job, busy, onSubmit, onCancel }: Props) {
             <span className={styles.headSub}>
               {job.systems ?? 0} systems · {shapes.length} distinct shapes
               {job.rememberedCount ? ` · ${job.rememberedCount} already known` : ''}
+              {job.autoNamedCount ? ` · ${job.autoNamedCount} read automatically` : ''}
             </span>
           </div>
           <button type="button" className={styles.cancel} onClick={onCancel} disabled={busy}>
@@ -87,6 +87,13 @@ export function ShapeNamer({ job, busy, onSubmit, onCancel }: Props) {
           <code>b</code>), and <code>x</code> is a muted note. Leave anything else empty —
           an empty box is counted while a wrong name becomes a wrong note everywhere that shape
           appears. Names are remembered, so the next video in this font needs none of this.
+          {job.autoNamedCount ? (
+            <>
+              {' '}
+              Boxes with a dashed edge were read automatically and nobody has checked them; correct
+              any that look wrong, and your answer is the one that gets remembered.
+            </>
+          ) : null}
         </p>
 
         <div className={styles.meter}>
@@ -108,7 +115,10 @@ export function ShapeNamer({ job, busy, onSubmit, onCancel }: Props) {
             return (
               <label
                 key={key}
-                className={`${styles.cell} ${shape.remembered ? styles.cellKnown : ''}`}
+                className={`${styles.cell} ${shape.remembered ? styles.cellKnown : ''} ${
+                  shape.suggested ? styles.cellSuggested : ''
+                }`}
+                title={shape.suggested ? 'Read automatically — check this one' : undefined}
               >
                 {shape.png ? (
                   <img

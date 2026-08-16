@@ -11,6 +11,13 @@ uvicorn>=0.30
 # copy fails with a 403 that looks like a broken link.
 yt-dlp>=2024.8.6
 
+# Talking to a vision model that names the printed shapes, which is the one step
+# that used to need a person. Any OpenAI-compatible endpoint serves: the reader is
+# pointed at a self-hosted Qwen 2.5-VL through TABVIDEO_VLM_URL. Optional on
+# purpose — without the library, or without that variable, shapes are named by
+# hand exactly as before.
+openai>=1.40
+
 # Tests only.
 pytest>=8.0
 httpx>=0.27

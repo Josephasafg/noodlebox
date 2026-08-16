@@ -10,6 +10,8 @@ itself is always stubbed: nothing here fetches anything.
 
 from __future__ import annotations
 
+import base64
+import json
 import time
 from pathlib import Path
 
@@ -17,7 +19,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from scripts.tabvideo import bank as bank_mod, fetch, frames, pipeline, server
+from scripts.tabvideo import bank as bank_mod, fetch, frames, namer as namer_mod, pipeline, server
 from scripts.tabvideo.glyphs import TEMPLATE_SIZE
 from scripts.tabvideo.tests import fixture
 
@@ -113,13 +115,54 @@ def test_naming_shapes_produces_a_score(video: Path) -> None:
     # Name every shape as the same digit. What each one says is irrelevant here;
     # that they reach the output as positioned text is the property under test.
     labels = {str(i): "7" for i in range(len(shapes))}
-    pages, unspelled = pipeline.emit(readings, shapes, labels)
+    emitted = pipeline.emit(readings, shapes, labels)
+    pages, unspelled = emitted.pages, emitted.unspelled
 
     assert len(pages) == 3
     assert unspelled == 0
     assert all(page.texts for page in pages), "every system should carry notes"
     horizontals = [s for s in pages[0].segments if abs(s.y1 - s.y0) < 0.01]
     assert len(horizontals) == 6, "the six lines of the tab staff"
+
+
+def test_an_unnamed_technique_mark_is_counted_rather_than_dropped(tmp_path: Path) -> None:
+    """
+    A slur arc nobody named must be reported, not silently discarded.
+
+    This is the bug that let a whole piece lose its articulation without saying
+    so. Unnamed *digits* have always been counted and reported unread, but an
+    unnamed flat mark was simply skipped: on the reference clip all 46 arcs and
+    27 of 28 slide dashes shared one unnamed shape, so the tab came out with no
+    hammer-ons, pull-offs or slides at all — and every count it reported said it
+    had been read perfectly. The notes were right, which is exactly what made it
+    hard to notice.
+    """
+    page = fixture.render_system([(2, 300, "4"), (2, 330, "2")], (20, fixture.WIDTH - 20))
+    fixture.draw_arc(page, 2, 310, 328)
+    video = fixture.write_video(tmp_path / "clip.mp4", pages=[page])
+
+    readings = pipeline.read_video(str(video))
+    shapes = pipeline.find_shapes(readings)
+    arcs = [flat for _, flat in readings[0].flat_marks]
+    assert arcs, "the fixture draws one"
+
+    # Name the digits as printed but not the arc, which is what an abstention
+    # leaves behind. They have to differ: a slur's direction — hammer-on or
+    # pull-off — is read from the frets it joins, and 4 to 4 goes nowhere.
+    named: dict[str, str] = {}
+    for mark in readings[0].components:
+        named[str(shapes.label_of(mark))] = "4" if mark.cx < 320 else "2"
+
+    emitted = pipeline.emit(readings, shapes, named)
+
+    assert emitted.silent == len(arcs), "the dropped arc is accounted for"
+    assert "p" not in [t.str for t in emitted.pages[0].texts], "and really was dropped"
+
+    # Named, it costs nothing to report and the technique comes back.
+    named[str(shapes.label_of(arcs[0]))] = "~"
+    again = pipeline.emit(readings, shapes, named)
+    assert again.silent == 0
+    assert "p" in [t.str for t in again.pages[0].texts]
 
 
 def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
@@ -176,7 +219,8 @@ def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
     name(718, line(1) - 3, "-", labels)
     name(1114, line(4) - 7, "b", labels)
 
-    pages, unspelled = pipeline.emit(readings, shapes, labels)
+    emitted = pipeline.emit(readings, shapes, labels)
+    pages, unspelled = emitted.pages, emitted.unspelled
     assert unspelled == 0, "the dash must not read as a truncated 7"
     texts = [t.str for t in pages[0].texts]
     assert texts.count("p") == 1, f"the falling arc should be one pull-off in {texts}"
@@ -199,7 +243,8 @@ def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
 def test_shapes_left_unnamed_are_counted_not_guessed(video: Path) -> None:
     readings = pipeline.read_video(str(video))
     shapes = pipeline.find_shapes(readings)
-    pages, unspelled = pipeline.emit(readings, shapes, {})
+    emitted = pipeline.emit(readings, shapes, {})
+    pages, unspelled = emitted.pages, emitted.unspelled
     assert unspelled > 0, "nothing was named, so nothing should have been read"
     assert all(not page.texts for page in pages)
 
@@ -283,7 +328,10 @@ def test_a_correction_beside_a_same_named_entry_does_not_crash(tmp_path: Path) -
     same = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
     other = np.ones((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
     keeper = bank_mod.Bank(
-        entries=[bank_mod.Entry(label="1", template=same), bank_mod.Entry(label="1", template=other)],
+        entries=[
+            bank_mod.Entry(label="1", template=same),
+            bank_mod.Entry(label="1", template=other),
+        ],
         path=tmp_path / "bank.json",
     )
     keeper.remember([other], {"0": "12b"})
@@ -313,6 +361,89 @@ def test_re_reading_a_video_does_not_grow_the_bank(tmp_path: Path) -> None:
     assert keeper.remember([template], {"0": "7"}) == 1
     assert keeper.remember([template], {"0": "7"}) == 0
     assert len(keeper) == 1
+
+
+def test_a_model_cannot_overturn_a_name_a_person_gave(tmp_path: Path) -> None:
+    """
+    The one rule that makes automatic naming safe to bank at all. A person looked
+    at the shape; the model read it. Where they disagree the person is right, and
+    the model's answer must not evict that entry or sit beside it as a tie — both
+    would turn a confirmed name into a shape that gets asked about, or read
+    wrongly, on every later video.
+    """
+    base = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
+    nudged = base.copy()
+    nudged[0, 0] = 0.02
+    keeper = bank_mod.Bank(path=tmp_path / "bank.json")
+    keeper.remember([base], {"0": "6"}, by=bank_mod.HUMAN)
+
+    assert keeper.remember([nudged], {"0": "5"}, by=bank_mod.MODEL) == 0
+    assert len(keeper) == 1
+    assert keeper.recognise([base]) == {0: "6"}, "still the name it was given"
+
+
+def test_a_person_overrules_what_a_model_read(tmp_path: Path) -> None:
+    base = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
+    nudged = base.copy()
+    nudged[0, 0] = 0.02
+    keeper = bank_mod.Bank(path=tmp_path / "bank.json")
+    keeper.remember([base], {"0": "5"}, by=bank_mod.MODEL)
+
+    keeper.remember([nudged], {"0": "6"}, by=bank_mod.HUMAN)
+
+    assert len(keeper) == 1, "the misreading is gone, not outvoted"
+    assert keeper.recognise([base]) == {0: "6"}
+
+
+def test_confirming_what_a_model_read_makes_the_name_a_persons(tmp_path: Path) -> None:
+    """
+    Otherwise a later run could overturn a name someone had already checked: the
+    entry would still be owned by the model that first guessed it right.
+    """
+    template = _template(11)
+    keeper = bank_mod.Bank(path=tmp_path / "bank.json")
+    keeper.remember([template], {"0": "7"}, by=bank_mod.MODEL)
+
+    assert keeper.remember([template], {"0": "7"}, by=bank_mod.HUMAN) == 0, "not stored twice"
+    assert [entry.by for entry in keeper.entries] == [bank_mod.HUMAN]
+
+
+def test_one_model_reading_can_correct_another(tmp_path: Path) -> None:
+    base = np.zeros((TEMPLATE_SIZE, TEMPLATE_SIZE), dtype=np.float32)
+    nudged = base.copy()
+    nudged[0, 0] = 0.02
+    keeper = bank_mod.Bank(path=tmp_path / "bank.json")
+    keeper.remember([base], {"0": "5"}, by=bank_mod.MODEL)
+
+    keeper.remember([nudged], {"0": "6"}, by=bank_mod.MODEL)
+
+    assert keeper.recognise([base]) == {0: "6"}
+    assert len(keeper) == 1, "a tie would be asked about for ever"
+
+
+def test_who_named_a_shape_survives_being_written_out(tmp_path: Path) -> None:
+    path = tmp_path / "bank.json"
+    keeper = bank_mod.Bank(path=path)
+    keeper.remember([_template(12)], {"0": "7"}, by=bank_mod.MODEL)
+    keeper.remember([_template(13)], {"0": "9"}, by=bank_mod.HUMAN)
+    keeper.save()
+
+    reloaded = bank_mod.load(path)
+
+    assert sorted(entry.by for entry in reloaded.entries) == [bank_mod.HUMAN, bank_mod.MODEL]
+
+
+def test_a_bank_written_before_models_named_anything_reads_as_confirmed(tmp_path: Path) -> None:
+    """Every name in an older bank was typed by a person, so it keeps that standing."""
+    path = tmp_path / "bank.json"
+    path.write_text(
+        json.dumps([{"label": "7", "template": base64.b64encode(bytes(400)).decode("ascii")}]),
+        encoding="utf-8",
+    )
+
+    entries = bank_mod.load(path).entries
+
+    assert [entry.by for entry in entries] == [bank_mod.HUMAN]
 
 
 def test_a_damaged_bank_does_not_stop_a_video_being_read(tmp_path: Path) -> None:
@@ -358,9 +489,7 @@ def test_a_link_into_the_local_network_is_refused(address: str, monkeypatch) -> 
     The URL comes from whoever is using the app, so it must not be usable to reach
     something only this machine can see — a metadata service most of all.
     """
-    monkeypatch.setattr(
-        fetch.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", (address, 0))]
-    )
+    monkeypatch.setattr(fetch.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", (address, 0))])
     with pytest.raises(fetch.UrlRejected):
         fetch.check_url("https://sneaky.example/clip.mp4")
 
@@ -519,6 +648,28 @@ def test_the_app_can_tell_the_service_is_there(client: TestClient) -> None:
     assert client.get("/api/health").json()["ok"] is True
 
 
+def test_the_app_can_tell_whether_shapes_will_be_named_for_it(
+    client: TestClient, monkeypatch
+) -> None:
+    """
+    Whether a model reads the shapes changes what the app should promise before
+    an import — a tab straight away, or a screen full of shapes to name — so it
+    is worth knowing before one starts rather than after.
+    """
+    monkeypatch.delenv(namer_mod.URL_VAR, raising=False)
+    monkeypatch.delenv(namer_mod.MODEL_VAR, raising=False)
+    off = client.get("/api/health").json()["vision"]
+    assert off == {"configured": False, "ready": False, "model": "", "problem": ""}
+
+    # Answered per request, because settings get edited while this is running and
+    # a cached answer would say an edit had not worked.
+    monkeypatch.setenv(namer_mod.URL_VAR, "http://127.0.0.1:8000/v1")
+    on = client.get("/api/health").json()["vision"]
+    assert on["configured"] is True
+    assert on["ready"] is False
+    assert namer_mod.MODEL_VAR in on["problem"]
+
+
 def test_a_video_link_is_read_and_stops_to_ask_about_shapes(client: TestClient) -> None:
     started = client.post("/api/extract", json={"url": "https://example.com/watch?v=abc"})
     assert started.status_code == 200
@@ -597,6 +748,150 @@ def test_a_name_outside_the_grammar_is_refused_not_trimmed(client: TestClient, b
     _await_state(client, job_id, "naming")
     answer = client.post(f"/api/extract/{job_id}/labels", json={"labels": {"0": bad}})
     assert answer.status_code == 400
+
+
+# --- naming the shapes without a person -----------------------------------
+
+
+class _StubNamer:
+    """Stands in for a configured vision endpoint, answering from a script."""
+
+    exemplars = 3
+
+    def __init__(self, answer, fail: bool = False) -> None:
+        self.answer = answer
+        self.fail = fail
+        self.asked: list[int] = []
+
+    def read(self, jobs, on_progress=None):
+        if self.fail:
+            raise RuntimeError("the endpoint is down")
+        outcomes = []
+        for position, job in enumerate(jobs):
+            self.asked.append(job.index)
+            label = self.answer(position, len(jobs)) if callable(self.answer) else self.answer
+            outcomes.append(namer_mod.Outcome(index=job.index, label=label, reason="agreed"))
+        if on_progress:
+            on_progress(len(jobs), len(jobs))
+        return outcomes
+
+
+def _all_but_the_rarest(position: int, total: int) -> str | None:
+    """Read everything except the last shape, which is the one-off tail."""
+    return None if position == total - 1 else "7"
+
+
+def _with_namer(monkeypatch, namer) -> None:
+    monkeypatch.setattr(namer_mod.Namer, "from_env", classmethod(lambda cls, environ=None: namer))
+
+
+def test_a_video_is_read_end_to_end_when_a_model_names_the_shapes(
+    client: TestClient, monkeypatch
+) -> None:
+    """The point of the whole thing: a link becomes a score with nothing to click."""
+    _with_namer(monkeypatch, _StubNamer("7"))
+
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    payload = _await_state(client, job_id, "done", "naming")
+
+    assert payload["state"] == "done", "nobody was asked anything"
+    assert payload["autoNamedCount"] == payload["shapeCount"]
+    assert payload["primitives"][0]["texts"]
+
+
+def test_shapes_the_model_declines_are_left_unread_rather_than_guessed(
+    client: TestClient, monkeypatch
+) -> None:
+    """
+    Abstaining is the safe failure and must not stop the import: the notes it
+    covered are reported unread, which is recoverable, and a guess would not be.
+    """
+    _with_namer(monkeypatch, _StubNamer(_all_but_the_rarest))
+
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    payload = _await_state(client, job_id, "done", "naming")
+
+    assert payload["state"] == "done"
+    assert payload["unresolvedCount"] > 0, "the rest is admitted, not invented"
+
+
+def test_a_model_that_reads_almost_nothing_still_asks_a_person(
+    client: TestClient, monkeypatch
+) -> None:
+    """
+    A broadly failing endpoint must not produce a score with most of its notes
+    missing. Past the threshold the naming screen comes back, prefilled with
+    whatever was read, which is the flow this always had.
+    """
+    _with_namer(monkeypatch, _StubNamer(_all_but_the_rarest))
+    monkeypatch.setattr(server, "AUTO_NAMED_FINISH_FRACTION", 0.0)
+
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    payload = _await_state(client, job_id, "naming", "done")
+
+    assert payload["state"] == "naming"
+    suggested = [shape for shape in payload["shapes"] if shape["suggested"]]
+    assert suggested, "what the model did read is offered rather than thrown away"
+    assert all(shape["label"] == "7" for shape in suggested)
+
+
+def test_a_broken_endpoint_falls_back_to_naming_by_hand(client: TestClient, monkeypatch) -> None:
+    _with_namer(monkeypatch, _StubNamer(None, fail=True))
+
+    job_id = client.post("/api/extract", json={"url": "https://example.com/a"}).json()["id"]
+    payload = _await_state(client, job_id, "naming", "done")
+
+    assert payload["state"] == "naming", "the job survives and asks as it always did"
+    assert payload["shapes"]
+
+
+def test_a_shape_the_bank_knows_is_never_sent_to_the_model(client: TestClient, monkeypatch) -> None:
+    """Nothing leaves the machine that has already been answered."""
+    first = client.post("/api/extract", json={"url": "https://example.com/one"}).json()["id"]
+    naming = _await_state(client, first, "naming")
+    labels = {str(shape["index"]): "7" for shape in naming["shapes"]}
+    client.post(f"/api/extract/{first}/labels", json={"labels": labels})
+
+    namer = _StubNamer("9")
+    _with_namer(monkeypatch, namer)
+    second = client.post("/api/extract", json={"url": "https://example.com/two"}).json()["id"]
+    _await_state(client, second, "done", "naming")
+
+    assert namer.asked == [], "every shape was already confirmed"
+
+
+def test_what_the_model_read_is_remembered_for_the_next_video(
+    client: TestClient, monkeypatch
+) -> None:
+    """So a font costs the endpoint one video, not one video every time."""
+    namer = _StubNamer("7")
+    _with_namer(monkeypatch, namer)
+    first = client.post("/api/extract", json={"url": "https://example.com/one"}).json()["id"]
+    _await_state(client, first, "done", "naming")
+    assert namer.asked, "the first video did the reading"
+
+    quiet = _StubNamer("9")
+    _with_namer(monkeypatch, quiet)
+    second = client.post("/api/extract", json={"url": "https://example.com/two"}).json()["id"]
+    payload = _await_state(client, second, "done", "naming")
+
+    assert quiet.asked == []
+    assert payload["rememberedCount"] == payload["shapeCount"]
+
+
+def test_a_person_correcting_a_model_wins_in_the_bank(client: TestClient, monkeypatch) -> None:
+    _with_namer(monkeypatch, _StubNamer(_all_but_the_rarest))
+    first = client.post("/api/extract", json={"url": "https://example.com/one"}).json()["id"]
+    _await_state(client, first, "done", "naming")
+
+    # The same shape, named differently by a person on a later video.
+    banked = bank_mod.load()
+    shape = next(entry for entry in banked.entries if entry.label == "7")
+    banked.remember([shape.template], {"0": "9"}, by=bank_mod.HUMAN)
+    banked.save()
+
+    reloaded = bank_mod.load()
+    assert reloaded.recognise([shape.template]) == {0: "9"}
 
 
 def test_an_unknown_job_is_a_not_found(client: TestClient) -> None:

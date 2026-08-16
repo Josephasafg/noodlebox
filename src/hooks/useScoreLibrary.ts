@@ -6,7 +6,7 @@ import {
   discardVideoJob,
   nameVideoShapes,
   readVideoJob,
-  serverAvailable,
+  serverHealth,
   startVideoExtraction,
   type VideoJob,
 } from '../tabpdf/videoServer'
@@ -66,6 +66,8 @@ export function useScoreLibrary() {
   const [videoJob, setVideoJob] = useState<VideoJob | null>(null)
   /** Whether videos can be read at all; null until it has been checked. */
   const [videoReady, setVideoReady] = useState<boolean | null>(null)
+  /** Whether a vision model is naming the shapes, so the library can say so. */
+  const [videoNamesShapes, setVideoNamesShapes] = useState(false)
   const pagesRef = useRef<TabPagePrimitives[] | null>(null)
   /** The job being followed. Anything else polling is stale and must stop. */
   const followingRef = useRef<string | null>(null)
@@ -233,9 +235,10 @@ export function useScoreLibrary() {
    * does, and it can be stopped and started while the app stays open.
    */
   const checkVideoServer = useCallback(async () => {
-    const ready = await serverAvailable()
-    setVideoReady(ready)
-    return ready
+    const health = await serverHealth()
+    setVideoReady(health !== null)
+    setVideoNamesShapes(health?.namesShapes === true)
+    return health !== null
   }, [])
 
   /** Take the primitives a finished extraction produced into the library. */
@@ -243,8 +246,35 @@ export function useScoreLibrary() {
     async (job: VideoJob) => {
       if (!job.pages) return null
       const name = `${job.title || 'video'}.tab`
+      const parsed = parseScore(job.pages)
+      // What the reader could not name never reaches the parser, so it cannot
+      // count it — and a video that named its own shapes says nothing on screen
+      // by itself. Both belong beside the parser's own notes on how it read this.
+      const warnings = [...parsed.warnings]
+      if (job.unreadCount) {
+        warnings.push(
+          `${job.unreadCount} printed ${job.unreadCount === 1 ? 'number was' : 'numbers were'} ` +
+            'not identified and left out rather than guessed at.',
+        )
+      }
+      // A dropped technique mark is not a missing note — the frets are all there
+      // and right — so it reads as a correct tab that is quietly missing its
+      // hammer-ons, pull-offs and slides. That is worth saying out loud.
+      if (job.silentTechniqueCount) {
+        warnings.push(
+          `${job.silentTechniqueCount} slur ${job.silentTechniqueCount === 1 ? 'or slide mark was' : 'and slide marks were'} ` +
+            'found but not identified, so hammer-ons, pull-offs and slides are missing here. ' +
+            'Naming those shapes on the next import brings them back.',
+        )
+      }
+      if (job.autoNamedCount) {
+        warnings.push(
+          'The printed shapes in this font were read automatically. Worth checking a bar ' +
+            'against the video: a misread shape is wrong everywhere it appears.',
+        )
+      }
       return await adopt(
-        parseScore(job.pages),
+        { ...parsed, warnings },
         job.pages,
         name,
         { primitives: job.pages },
@@ -352,10 +382,12 @@ export function useScoreLibrary() {
             staves: null,
             shapeCount: null,
             rememberedCount: null,
+            autoNamedCount: null,
             unresolvedCount: null,
             shapes: null,
             pages: null,
             unreadCount: null,
+      silentTechniqueCount: null,
           })
           return await follow(id)
         } catch (cause) {
@@ -523,6 +555,7 @@ export function useScoreLibrary() {
     progress,
     videoJob,
     videoReady,
+    videoNamesShapes,
     checkVideoServer,
     nameShapes,
     cancelVideo,

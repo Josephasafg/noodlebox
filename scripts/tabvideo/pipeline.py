@@ -6,10 +6,12 @@ from: `cli.py` runs it from a terminal and `server.py` runs it for the app, and
 both must behave identically, so the steps live here rather than in either.
 
 The one step that is not here is naming the glyph shapes. That is deliberately a
-caller's problem — the CLI asks for a labels file and the server asks the app —
-because a wrong name becomes a wrong note everywhere that shape occurs, and
-nothing available guesses well enough to be trusted with it. See
-`scripts/tabvideo/README.md` for the measurements behind that.
+caller's problem — the CLI asks for a labels file, and the server takes what
+`bank.py` already knows, has `namer.py` read the rest where a vision model is
+configured, and asks the app about whatever is still unnamed. A wrong name becomes
+a wrong note everywhere that shape occurs, so who may decide what a glyph says is
+a policy question, and it does not belong in the recognition path. See
+`scripts/tabvideo/README.md`.
 """
 
 from __future__ import annotations
@@ -43,6 +45,45 @@ MAX_FRET = 24
 LABEL_RE = re.compile(
     r"^(?:\d{1,2}(?:[hp]\d{1,2}|-{1,2}|~|b)?|-{1,2}\d{1,2}|-{1,2}|~\d{1,2}|~|b\d{1,2}|b|[x()])?$"
 )
+
+# How much of the page to keep either side of a printed number when a shape is
+# rendered to be read, as a fraction of staff spacing. Enough to show the rest of
+# the number and the lines it sits on, without pulling in the next note along.
+CONTEXT_MARGIN = 0.5
+
+# Six strings share a staff, so the band around a number also holds whatever is
+# played on the strings above and below it, and the model reads the two together:
+# a `4` with a `2` above it came back as "a 4 sitting below a 2" and went unnamed
+# — 123 marks, 5% of the reference clip.
+#
+# Cropping them out was tried and measured worse. A number is 0.77 of the string
+# spacing tall (median over 1825 of them, p10 0.72, p90 0.78), leaving about 0.23
+# of clear air, so the margin that excludes a neighbour is 0.2 and there is no
+# slope to trade along: 0.3 already catches one in 66.5% of crops. At 0.2 the
+# digits sit hard against the frame with no staff around them, and legibility
+# went with the context — the `1` of a printed `11`, 341 marks, stopped being
+# named at all, and marks left unread nearly doubled.
+#
+# So the band stays generous and the other strings' marks are painted out of it
+# instead. That keeps what makes context work — room around the glyph, the lines
+# that fix its baseline, the neighbouring digit that fixes its size — and removes
+# only the thing that was being misread as part of the number.
+PAPER_PERCENTILE = 95
+
+# The colour a context render outlines the mark in, and how thick. Colour rather
+# than grey: the page is monochrome, so red is the one thing on it that cannot be
+# read as engraving — whereas any grey sits inside the range the staff lines and
+# the glyphs already occupy.
+#
+# This was a mid grey at one pixel, on the reasoning that it would read as an
+# annotation. It did not. Asked about the `2` inside a printed `12`, the model
+# answered `12-` — describing the whole number, and reading the interrupted staff
+# line either side of it as a slide dash — and all three looks agreed, so the
+# consensus rule passed it straight through. An outline that can be mistaken for
+# part of the notation is worse than none, because the answer then comes back
+# about the wrong subject with no sign that anything went wrong.
+CONTEXT_OUTLINE = (0, 0, 255)
+CONTEXT_OUTLINE_WIDTH = 2
 
 
 class ScrollingVideo(Exception):
@@ -241,7 +282,157 @@ def shape_crop(
     component = _first_of_each(shapes).get(index)
     if component is None:
         return None
-    image = _owners(readings)[id(component)].page.image
+    return component_crop(readings, component, scale=scale, pad=pad)
+
+
+def shape_members(
+    readings: list[Reading], shapes: Shapes, index: int, limit: int = 3
+) -> list[glyphs.Component]:
+    """
+    Several marks belonging to one shape, taken from as many systems as possible.
+
+    Anything asked to name a shape should be shown more than one printing of it,
+    so that agreement between the answers means something. Two crops of the same
+    mark are one observation twice; two crops from different systems are two, and
+    a disagreement between them is a signal the shape is not being read reliably.
+    """
+    owner = _owners(readings)
+    by_system: dict[int, list[glyphs.Component]] = {}
+    for position, component in enumerate(shapes.every):
+        if shapes.assignment[position] != index:
+            continue
+        reading = owner.get(id(component))
+        by_system.setdefault(id(reading), []).append(component)
+
+    # One from each system before a second from any, so a shape printed on ten
+    # systems is never sampled three times from the same one.
+    out: list[glyphs.Component] = []
+    queues = list(by_system.values())
+    depth = 0
+    while len(out) < limit and any(len(queue) > depth for queue in queues):
+        for queue in queues:
+            if len(queue) > depth:
+                out.append(queue[depth])
+                if len(out) == limit:
+                    break
+        depth += 1
+    return out
+
+
+def _locate(
+    reading: Reading, component: glyphs.Component
+) -> tuple[staff_mod.Staff | None, glyphs.Run | None]:
+    """The staff a mark sits on and the token it spells part of, if any."""
+    for one, run in reading.runs:
+        if any(member is component for member in run.components):
+            return one, run
+    for one, flat in reading.flat_marks:
+        if flat is component:
+            return one, None
+    return None, None
+
+
+def _hide_other_strings(
+    crop: np.ndarray,
+    reading: Reading,
+    one: staff_mod.Staff,
+    run: glyphs.Run | None,
+    component: glyphs.Component,
+    left: int,
+    top: int,
+) -> None:
+    """
+    Paint out notes played on other strings, in place.
+
+    Only marks that sit clear of this number vertically are removed, so a note
+    printed beside it on the same string stays: it is the neighbouring glyph that
+    fixes the size, and losing that is what made the tight crop worse than the
+    problem it fixed.
+    """
+    band = run.components if run and run.components else [component]
+    band_top = min(mark.y0 for mark in band)
+    band_bottom = max(mark.y1 for mark in band)
+    keep = {id(mark) for mark in band} | {id(component)}
+
+    others: list[glyphs.Component] = [
+        mark
+        for other_staff, other in reading.runs
+        if other_staff is one
+        for mark in other.components
+    ]
+    others.extend(flat for other_staff, flat in reading.flat_marks if other_staff is one)
+
+    paper = int(np.percentile(crop, PAPER_PERCENTILE))
+    for mark in others:
+        if id(mark) in keep:
+            continue
+        if mark.y1 >= band_top and mark.y0 <= band_bottom:
+            continue  # level with this number, so part of its line rather than another's
+        crop[
+            max(0, mark.y0 - top - 1) : max(0, mark.y1 - top + 2),
+            max(0, mark.x0 - left - 1) : max(0, mark.x1 - left + 2),
+        ] = paper
+
+
+def shape_context(
+    readings: list[Reading],
+    component: glyphs.Component,
+    scale: int = 6,
+) -> np.ndarray | None:
+    """
+    One mark shown inside the number and the staff it belongs to, magnified.
+
+    A digit ten pixels tall is far more legible in context than alone: the glyph
+    beside it fixes the size, and the lines under it fix the baseline, which is
+    most of what separates a `6` from a `5`. The mark is outlined rather than
+    cropped to, because the question being asked is about that mark and not about
+    its neighbour.
+    """
+    reading = _owners(readings).get(id(component))
+    if reading is None:
+        return None
+    one, run = _locate(reading, component)
+    if one is None:
+        return None
+
+    image = reading.page.image
+    margin = one.spacing * CONTEXT_MARGIN
+    left = max(0, int(round((run.x0 if run else component.x0) - margin)))
+    right = min(image.shape[1], int(round((run.x1 if run else component.x1) + margin)))
+    top = max(0, int(round(one.top - one.spacing * glyphs.BAND_MARGIN)))
+    bottom = min(image.shape[0], int(round(one.bottom + one.spacing * glyphs.BAND_MARGIN)))
+    if right - left < 1 or bottom - top < 1:
+        return None
+
+    crop = image[top:bottom, left:right].copy()
+    if crop.size == 0:
+        return None
+    _hide_other_strings(crop, reading, one, run, component, left, top)
+    out = cv2.resize(
+        crop,
+        (crop.shape[1] * scale, crop.shape[0] * scale),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    # Colour only so the outline has somewhere to live; the notation stays grey.
+    out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
+    cv2.rectangle(
+        out,
+        ((component.x0 - left) * scale - 1, (component.y0 - top) * scale - 1),
+        ((component.x1 - left) * scale, (component.y1 - top) * scale),
+        CONTEXT_OUTLINE,
+        CONTEXT_OUTLINE_WIDTH,
+    )
+    return out
+
+
+def component_crop(
+    readings: list[Reading], component: glyphs.Component, scale: int = 6, pad: int = 2
+) -> np.ndarray | None:
+    """One mark's own pixels, magnified — `shape_crop` for a chosen member."""
+    reading = _owners(readings).get(id(component))
+    if reading is None:
+        return None
+    image = reading.page.image
     crop = image[
         max(0, component.y0 - pad) : component.y1 + pad,
         max(0, component.x0 - pad) : component.x1 + pad,
@@ -321,6 +512,7 @@ ARC_REACH = 2.5
 # Two notes are on the same string when their baselines agree to well under a
 # space; the tolerance absorbs the odd pixel of bounding-box slack.
 SAME_STRING_TOL = 0.6
+
 
 # Above this bow (see `glyphs._bow`) a flat mark is a slur arc; below, a slide
 # dash. The pixels decide rather than the label, because arcs and dashes
@@ -410,7 +602,9 @@ class _StaffTexts:
             )
         )
 
-    def add_run(self, run: glyphs.Run, spelled: str, shapes: Shapes, labels: dict[str, str]) -> None:
+    def add_run(
+        self, run: glyphs.Run, spelled: str, shapes: Shapes, labels: dict[str, str]
+    ) -> None:
         x0, x1 = float(run.x0), float(run.x1)
         baseline, height = run.baseline, float(run.height)
         width = x1 - x0
@@ -556,12 +750,36 @@ class _StaffTexts:
         return [note.item for note in self.notes] + self.marks
 
 
-def emit(
-    readings: list[Reading], shapes: Shapes, labels: dict[str, str]
-) -> tuple[list[primitives.PagePrimitives], int]:
-    """Build page primitives, reporting how many tokens could not be spelled."""
+@dataclass(frozen=True)
+class Emitted:
+    """What a video came out as, and what of it could not be said."""
+
+    pages: list[primitives.PagePrimitives]
+
+    unspelled: int
+    """Fret tokens no name could be found for. Reported to the app as unread."""
+
+    silent: int
+    """
+    Slur arcs and slide dashes dropped because their shape has no name.
+
+    Counted separately because they used to be lost in silence. An unnamed digit
+    has always been reported unread, but an unnamed flat mark was simply skipped,
+    so a tab could lose every hammer-on, pull-off and slide it had and still
+    describe itself as fully read. On the reference clip that was all 46 arcs and
+    27 of the 28 dashes, sitting together in one shape nobody had named — the
+    whole piece came out with no articulation at all, and nothing said so.
+
+    The asymmetry mattered more than the count: every safety property here rests
+    on an unread mark being a visible gap rather than a quiet omission.
+    """
+
+
+def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emitted:
+    """Build page primitives, reporting what could not be spelled or attached."""
     pages: list[primitives.PagePrimitives] = []
     unspelled = 0
+    silent = 0
     for reading in readings:
         height, width = reading.page.image.shape
         declared_width, declared_height, dx = primitives.page_frame(width, height)
@@ -614,6 +832,8 @@ def emit(
                 label = labels.get(str(shapes.label_of(flat)))
                 if label:
                     emitter.add_flat(flat, label)
+                else:
+                    silent += 1
             unspelled += emitter.unread
             texts.extend(emitter.resolve())
         pages.append(
@@ -625,4 +845,4 @@ def emit(
                 texts=texts,
             )
         )
-    return pages, unspelled
+    return Emitted(pages=pages, unspelled=unspelled, silent=silent)

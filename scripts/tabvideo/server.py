@@ -8,12 +8,13 @@ still happen when a link is pasted into the library, not in a terminal.
 
     python3 -m scripts.tabvideo.server        # or: npm run dev, which starts both
 
-What it does not do is decide what a glyph says. Recognition is measured at 38%
-against system fonts and 7-24% with Tesseract on real video pixels, because fret
-digits are around ten pixels tall; a wrong name becomes a wrong note everywhere
-that shape occurs. So a job stops at `naming`, hands the app magnified pictures of
-each distinct shape, and waits to be told. Names confirmed once are remembered in
-`bank.py`, which is what makes the next video in that font need nothing.
+Deciding what a glyph says is the one part of this that is not arithmetic. A
+wrong name becomes a wrong note everywhere that shape occurs, so a job never
+guesses: it takes what `bank.py` already knows, asks `namer.py` to read the rest
+if a vision model is configured, and stops at `naming` with magnified pictures of
+whatever is still unread. With no endpoint configured, or one that cannot read the
+font, that is every shape and the app asks as it always has. Either way the names
+are remembered, which is what makes the next video in that font need nothing.
 
 Deliberately bound to the loopback interface. It downloads whatever URL it is
 given and spends real CPU doing it, so it is not something to expose.
@@ -24,6 +25,7 @@ from __future__ import annotations
 import base64
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -39,8 +41,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import bank as bank_mod, fetch, pipeline
+from . import bank as bank_mod, env as env_mod, fetch, namer as namer_mod, pipeline
 from .primitives import PagePrimitives
+
+# Before anything reads a setting. Nothing about this service is started by hand,
+# so settings that only exist in a shell are settings that are usually absent.
+env_mod.apply()
 
 # The dev server and a preview build; nothing else has any business calling this.
 ALLOWED_ORIGINS = [
@@ -70,6 +76,15 @@ JOB_TTL_S = 60 * 60
 AUTO_FINISH_UNREAD_FRACTION = 0.01
 AUTO_FINISH_UNREAD_SHAPES = 5
 
+# The same question once a model has read the shapes, where the tolerance has to
+# be looser: it abstains on anything it is unsure of, and those abstentions are
+# mostly the long tail of one-off debris that a person would leave empty too. A
+# healthy read sits far under this — 20 shapes cover 96% of the marks on the
+# reference clip — so what this really catches is an endpoint that is down or a
+# font the model cannot read, which belongs in front of a person rather than in a
+# score with most of its notes missing.
+AUTO_NAMED_FINISH_FRACTION = 0.10
+
 State = Literal["queued", "downloading", "reading", "naming", "emitting", "done", "error"]
 
 
@@ -87,9 +102,13 @@ class Job:
     readings: list[pipeline.Reading] = field(default_factory=list)
     shapes: pipeline.Shapes | None = None
     remembered: dict[int, str] = field(default_factory=dict)
+    auto: dict[int, str] = field(default_factory=dict)
+    """Names a model read off the shapes, kept apart because they are banked as its own."""
     labels: dict[str, str] = field(default_factory=dict)
     pages: list[PagePrimitives] | None = None
     unspelled: int = 0
+    silent_techniques: int = 0
+    """Slur arcs and slide dashes dropped for want of a name, which used to vanish."""
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def cleanup(self) -> None:
@@ -162,13 +181,58 @@ def _get(job_id: str) -> Job:
 
 
 def _unresolved(job: Job) -> list[int]:
-    """Shapes nobody has named yet, commonest first."""
+    """Shapes nothing has named yet, commonest first."""
     assert job.shapes is not None
     return [
         index
         for index in range(len(job.shapes))
-        if str(index) not in job.labels and index not in job.remembered
+        if str(index) not in job.labels
+        and index not in job.remembered
+        and index not in job.auto
     ]
+
+
+def _read_shapes(job: Job) -> None:
+    """
+    Have a model name the shapes the bank did not recognise.
+
+    The bank goes first so a shape someone already confirmed is never sent
+    anywhere, and this whole step is optional: without an endpoint configured
+    there is no namer, and any failure inside it leaves the shapes unnamed for a
+    person, which is the flow this has always had.
+    """
+    assert job.shapes is not None
+    namer = namer_mod.Namer.from_env()
+    if namer is None:
+        # Configured-but-unusable looks exactly like never-configured from the
+        # app: a naming screen. Say which one this is, because the difference is
+        # a typo in a settings file nobody is looking at.
+        state = namer_mod.availability()
+        if state.problem:
+            print(f"shapes will be named by hand: {state.problem}", file=sys.stderr)
+        return
+    unresolved = _unresolved(job)
+    if not unresolved:
+        return
+
+    job.stage = "reading the printed shapes"
+    job.progress = 0.0
+    try:
+        asked = namer_mod.build_jobs(job.readings, job.shapes, unresolved, exemplars=namer.exemplars)
+
+        def progressed(done: int, total: int) -> None:
+            job.progress = done / max(1, total)
+
+        for outcome in namer.read(asked, on_progress=progressed):
+            if outcome.label is not None:
+                job.auto[outcome.index] = outcome.label
+    except Exception as problem:  # noqa: BLE001 - naming is an optimisation, never a failure
+        # The job carries on and the app asks about the shapes, which is a worse
+        # experience and not a wrong one. Said out loud because the symptom
+        # otherwise is a naming screen appearing for no visible reason.
+        print(f"reading the shapes failed, falling back to naming: {problem}", file=sys.stderr)
+    finally:
+        job.progress = None
 
 
 def _run(job: Job) -> None:
@@ -219,11 +283,20 @@ def _run(job: Job) -> None:
             shutil.rmtree(job.workdir, ignore_errors=True)
             job.workdir = None
 
+        _read_shapes(job)
+
         unresolved = _unresolved(job)
         share = sum(job.shapes.counts[i] for i in unresolved) / max(1, sum(job.shapes.counts))
-        if unresolved and (
-            len(unresolved) > AUTO_FINISH_UNREAD_SHAPES or share > AUTO_FINISH_UNREAD_FRACTION
-        ):
+        if job.auto:
+            # A model read the shapes, so what is left is what it declined to
+            # name. Those are reported unread rather than asked about, unless
+            # there are so many that the read cannot be trusted.
+            stop = share > AUTO_NAMED_FINISH_FRACTION
+        else:
+            stop = bool(unresolved) and (
+                len(unresolved) > AUTO_FINISH_UNREAD_SHAPES or share > AUTO_FINISH_UNREAD_FRACTION
+            )
+        if stop:
             job.state = "naming"
             job.stage = f"{len(unresolved)} shapes need naming"
             return
@@ -245,18 +318,27 @@ def _finish(job: Job, submitted: dict[str, str]) -> None:
     job.state = "emitting"
     job.stage = "building the score"
     labels = {str(index): name for index, name in job.remembered.items()}
+    labels.update({str(index): name for index, name in job.auto.items()})
     labels.update(submitted)
     job.labels = labels
 
-    pages, unspelled = pipeline.emit(job.readings, job.shapes, labels)
+    emitted = pipeline.emit(job.readings, job.shapes, labels)
+    pages, unspelled = emitted.pages, emitted.unspelled
+    job.silent_techniques = emitted.silent
     job.pages, job.unspelled = pages, unspelled
 
-    # Only names a person confirmed are worth remembering. Ones this job took
-    # from the bank are already in it, and re-storing them would just duplicate.
-    confirmed = {key: value for key, value in submitted.items()}
-    if confirmed:
+    # Names this job worked out are worth keeping; ones it took from the bank are
+    # already in it, and re-storing them would just duplicate. A person's answer
+    # is banked as theirs and overrides the model's reading of the same shape.
+    machine = {
+        str(index): name for index, name in job.auto.items() if str(index) not in submitted
+    }
+    if machine or submitted:
         remembered = bank_mod.load()
-        remembered.remember(job.shapes.centroids, confirmed)
+        if machine:
+            remembered.remember(job.shapes.centroids, machine, by=bank_mod.MODEL)
+        if submitted:
+            remembered.remember(job.shapes.centroids, submitted, by=bank_mod.HUMAN)
         remembered.save()
 
     job.state = "done"
@@ -278,6 +360,8 @@ def _shape_pictures(job: Job) -> list[dict[str, Any]]:
         known = job.labels.get(str(index))
         if known is None and index in job.remembered:
             known = job.remembered[index]
+        if known is None and index in job.auto:
+            known = job.auto[index]
         out.append(
             {
                 "index": index,
@@ -285,6 +369,9 @@ def _shape_pictures(job: Job) -> list[dict[str, Any]]:
                 "png": encoded,
                 "label": known,
                 "remembered": index in job.remembered,
+                # A machine's reading is a suggestion to check, not a name
+                # someone confirmed, and the two must not look alike.
+                "suggested": index in job.auto and str(index) not in job.labels,
             }
         )
     return out
@@ -305,6 +392,7 @@ def _status(job: Job, *, include_shapes: bool) -> dict[str, Any]:
         payload["staves"] = sum(len(r.staves) for r in job.readings) or None
         payload["shapeCount"] = len(job.shapes)
         payload["rememberedCount"] = len(job.remembered)
+        payload["autoNamedCount"] = len(job.auto)
         payload["unresolvedCount"] = len(_unresolved(job))
         if include_shapes and job.state == "naming":
             payload["shapes"] = _shape_pictures(job)
@@ -320,13 +408,31 @@ def _status(job: Job, *, include_shapes: bool) -> dict[str, Any]:
             for page in job.pages
         ]
         payload["unreadCount"] = job.unspelled
+        # Reported separately because it means something different to a reader: the
+        # notes are all there and correct, but the piece has lost its articulation.
+        payload["silentTechniqueCount"] = job.silent_techniques
     return payload
 
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     """So the app can tell whether reading a video is possible at all."""
-    return {"ok": True, "service": "tabvideo", "maxDurationMinutes": fetch.MAX_DURATION_S // 60}
+    # Read per call rather than cached: settings are edited while this runs, and
+    # a stale answer here would tell someone their edit did not work.
+    vision = namer_mod.availability()
+    return {
+        "ok": True,
+        "service": "tabvideo",
+        "maxDurationMinutes": fetch.MAX_DURATION_S // 60,
+        # Whether shapes get named automatically decides what the app should
+        # promise before an import, so it is worth saying before one starts.
+        "vision": {
+            "configured": vision.configured,
+            "ready": vision.ready,
+            "model": vision.model,
+            "problem": vision.problem,
+        },
+    }
 
 
 @app.post("/api/extract")
@@ -386,8 +492,25 @@ def discard(job_id: str) -> dict[str, bool]:
     return {"ok": True}
 
 
+def _announce() -> None:
+    """Say on startup whether shapes will be named automatically."""
+    vision = namer_mod.availability()
+    if vision.ready:
+        print(f"tabvideo: shapes will be read by {vision.model}")
+    elif vision.problem:
+        print(f"tabvideo: shapes will be named by hand — {vision.problem}")
+    else:
+        print(
+            "tabvideo: shapes will be named by hand. To have a vision model read "
+            f"them, set {namer_mod.URL_VAR} and {namer_mod.MODEL_VAR} in .env "
+            "(see scripts/tabvideo/README.md)."
+        )
+
+
 def main() -> None:
     import uvicorn
+
+    _announce()
 
     # Loopback by default, and overridable only through the environment so that
     # exposing this is always a deliberate act. Vite's proxy reads the same

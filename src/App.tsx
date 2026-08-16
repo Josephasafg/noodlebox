@@ -363,6 +363,7 @@ export function App() {
             videoStage={library.videoJob?.stage ?? null}
             videoProgress={library.videoJob?.progress ?? null}
             videoReady={library.videoReady}
+            videoNamesShapes={library.videoNamesShapes}
             onCheckVideoServer={() => void library.checkVideoServer()}
             onImport={(file) => {
               setPreferred('score')
