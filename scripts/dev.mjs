@@ -9,8 +9,16 @@
  * The service is optional on purpose: everything except importing a video link
  * works without it, so a missing Python or a missing dependency prints how to fix
  * it and leaves the app running.
+ *
+ * A `.env` beside the app is read first (`devEnv.mjs`), because settings only
+ * reach the service if they exist before it is spawned — and `TABVIDEO_PORT` has
+ * to reach Vite's proxy config, which is in this process rather than that one.
  */
 import { spawn } from 'node:child_process'
+import { applyEnv } from './devEnv.mjs'
+
+// Before anything reads a setting, including Vite's proxy target.
+applyEnv()
 
 const children = []
 let shuttingDown = false

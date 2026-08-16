@@ -29,3 +29,8 @@ __pycache__/
 
 # tabvideo extraction output (copyrighted source material)
 build/
+
+# Local settings: a cluster address, and possibly a token. .env.example is the
+# committed one.
+.env
+.env.local
