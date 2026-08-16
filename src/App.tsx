@@ -13,6 +13,7 @@ import { useScaleState } from './hooks/useScaleState'
 import { useGuitarPlayback } from './hooks/useGuitarPlayback'
 import { useScoreLibrary } from './hooks/useScoreLibrary'
 import { notesAtBeat, useBeatPlayhead } from './hooks/useBeatPlayhead'
+import { keystrokeIsTaken, overlayIsOpen } from './hooks/shortcuts'
 import { fretNotesInRange, sliceScore } from './tabpdf/playable'
 import {
   FRET_COUNT,
@@ -296,9 +297,15 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-      if (e.key === 'ArrowLeft') {
+      if (keystrokeIsTaken(e.key, e.target)) return
+      if (e.key === ' ') {
+        // Space is the transport, wherever you are on the page — except under an
+        // overlay, where it belongs to whatever is open in front.
+        if (overlayIsOpen(document) || e.metaKey || e.ctrlKey || e.altKey) return
+        // Held down it would scroll the page and machine-gun the transport.
+        e.preventDefault()
+        if (!e.repeat) handleTogglePlay()
+      } else if (e.key === 'ArrowLeft') {
         e.preventDefault()
         cycleKey(-1)
       } else if (e.key === 'ArrowRight') {
@@ -320,7 +327,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cycleKey, cycleScale, cyclePosition])
+  }, [cycleKey, cycleScale, cyclePosition, handleTogglePlay])
 
   const borrowedFrom =
     lick && lick.scaleId !== scale.id ? getScale(lick.scaleId)?.displayName ?? null : null
@@ -399,6 +406,7 @@ export function App() {
             onClick={handleTogglePlay}
             aria-pressed={playback.playing}
             aria-busy={playback.loading}
+            title="Space"
             aria-label={
               playback.playing
                 ? 'Stop playback'
