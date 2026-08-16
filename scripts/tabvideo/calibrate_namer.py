@@ -40,6 +40,7 @@ lesson videos are copyrighted, so this is run by hand.
 from __future__ import annotations
 
 import argparse
+import collections
 import sys
 from pathlib import Path
 
@@ -53,6 +54,13 @@ env_mod.apply()
 # the ones it never checked, and reads as a pass.
 MIN_JUDGED_FRACTION = 0.5
 
+# Everything the emitter prints that is not a fret number. `x` is a muted note
+# rather than a technique, but it is a token the parser knows. Anything outside
+# this and the frets is a token nothing downstream is expecting, which is worth
+# saying out loud: `(5h6` is a ghost bracket that grouped with a fused pair, and
+# it reaches the parser as five characters of nonsense.
+TECHNIQUES = ("h", "p", "sl.", "bend", "x")
+
 
 def _truth(shapes: pipeline.Shapes, path: Path | None) -> dict[int, str]:
     """
@@ -65,6 +73,107 @@ def _truth(shapes: pipeline.Shapes, path: Path | None) -> dict[int, str]:
     every = bank_mod.load(path)
     human = bank_mod.Bank([entry for entry in every.entries if entry.by == bank_mod.HUMAN])
     return human.recognise(shapes.centroids)
+
+
+def _census(emitted: pipeline.Emitted) -> tuple[list[str], list[str]]:
+    """
+    What the reading came out as, and what looks wrong about it without a truth.
+
+    Names were 24 correct out of 24 while the clip was emitting no articulation at
+    all, so scoring names says nothing about the music. These are checks on the
+    output itself, and none of them needs to know the right answer: a technique
+    that was found and never printed, an arc that joined nothing, a run whose
+    digits had a second playable reading. Each is a question a person can settle
+    by looking at one bar.
+    """
+    frets: collections.Counter[int] = collections.Counter()
+    techniques: collections.Counter[str] = collections.Counter()
+    odd: collections.Counter[str] = collections.Counter()
+    for page in emitted.pages:
+        for text in page.texts:
+            bare = text.str.strip("()")
+            if bare.isdigit():
+                frets[int(bare)] += 1
+            elif text.str in TECHNIQUES:
+                techniques[text.str] += 1
+            else:
+                odd[text.str] += 1
+
+    lines = [
+        f"{sum(frets.values())} notes, {sum(techniques.values())} technique marks",
+        "  techniques: " + (", ".join(f"{k} x{v}" for k, v in techniques.most_common()) or "none"),
+        "  frets: " + ", ".join(f"{fret}x{n}" for fret, n in sorted(frets.items())),
+        f"  {emitted.runs} printed tokens, {emitted.unspelled} of them unread",
+        f"  {emitted.flats} technique marks found: {emitted.silent} unnamed, "
+        f"{emitted.unattached} joined nothing, {emitted.ignored} named as something else",
+    ]
+
+    contested = sorted(emitted.contested.items(), key=lambda kv: -kv[1])
+    if contested:
+        lines.append(
+            "  digits with a second playable reading (shortest taken): "
+            + ", ".join(f"{text} x{n}" for text, n in contested)
+        )
+
+    complaints: list[str] = []
+    if odd:
+        complaints.append(
+            "these tokens are neither a fret nor a technique, so the parser will make "
+            "what it can of them: " + ", ".join(f"{k!r} x{v}" for k, v in odd.most_common())
+        )
+    if emitted.silent:
+        complaints.append(
+            f"{emitted.silent} technique marks have no name, so their hammer-ons, "
+            f"pull-offs and slides are missing. Name that shape once and they come back."
+        )
+    if emitted.ignored:
+        complaints.append(
+            f"{emitted.ignored} flat marks are named as something a technique cannot use. "
+            f"A slur arc named as a digit is a technique lost and a note invented."
+        )
+    if emitted.unattached:
+        complaints.append(
+            f"{emitted.unattached} named arcs found no pair of notes to join, so printed nothing."
+        )
+    if emitted.flats and not techniques:
+        complaints.append(
+            f"{emitted.flats} technique marks were found and the score has no articulation "
+            f"at all. This is the failure that a perfect naming score hides."
+        )
+    suspect = _suspect_frets(emitted.contested, frets)
+    if suspect:
+        complaints.append(
+            "these read as a fret the piece barely uses, while their legato reading "
+            "uses frets it plays constantly — check one bar of each by eye: " + suspect
+        )
+    return lines, complaints
+
+
+def _suspect_frets(contested: dict[str, int], frets: collections.Counter[int]) -> str:
+    """
+    Contested digits where the joined reading looks worse than the split one.
+
+    Nothing outside the piece can settle `24`: fret 24 is playable and so is a
+    hammer-on from 2 to 4. The piece can. A tab whose notes live between frets 2
+    and 12 does not visit fret 24 five times, and its 2s and 4s number in the
+    hundreds — so the joined reading being rarer than either half of the split
+    one is the tell. That is a comparison against the reader's own output, which
+    is the only ground available here, and it is a reason to look rather than a
+    reason to act: it flags four patterns on the reference clip, and every one of
+    them is a legato pair printed without an arc.
+    """
+    out = []
+    for text, seen in sorted(contested.items(), key=lambda kv: -kv[1]):
+        readings = pipeline._readings_of(text)
+        joined = min(readings, key=len)
+        if len(joined) != 1:
+            continue  # already split, so nothing was claimed that could be wrong
+        split = min((r for r in readings if len(r) > 1), key=len, default=None)
+        if split is None:
+            continue
+        if frets[int(text)] < min(frets[int(fret)] for fret in split):
+            out.append(f"{text} x{seen}")
+    return ", ".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -174,6 +283,16 @@ def main(argv: list[str] | None = None) -> int:
         f"{wrong_marks / max(1, total_marks):.1%} named wrongly, "
         f"{(total_marks - named_marks) / max(1, total_marks):.1%} left to a person"
     )
+
+    # Then the music. Every number above is about names, and names were perfect
+    # through the whole time the reader was dropping every hammer-on it found.
+    labels = {str(index): name for index, name in truth.items()}
+    labels.update({str(o.index): o.label for o in outcomes if o.label is not None})
+    lines, complaints = _census(pipeline.emit(readings, shapes, labels))
+    print("\nwhat came out:")
+    print("\n".join(lines))
+    for complaint in complaints:
+        print(f"\n  ! {complaint}")
 
     if wrong:
         print(

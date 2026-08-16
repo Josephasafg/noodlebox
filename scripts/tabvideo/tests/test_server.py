@@ -165,6 +165,35 @@ def test_an_unnamed_technique_mark_is_counted_rather_than_dropped(tmp_path: Path
     assert "p" in [t.str for t in again.pages[0].texts]
 
 
+def test_everything_read_is_either_printed_or_counted(tmp_path: Path) -> None:
+    """
+    Nothing may leave `emit` without going through a counter.
+
+    The articulation bug was not a wrong number, it was a missing one: the branch
+    that discarded unnamed arcs incremented nothing, so the loss had no way to
+    appear in any report. Counting what went in, and requiring every drop to be
+    accounted for, is what makes that shape of fault visible instead of silent —
+    whatever future branch introduces it.
+    """
+    page = fixture.render_system([(2, 300, "4"), (2, 330, "2")], (20, fixture.WIDTH - 20))
+    fixture.draw_arc(page, 2, 310, 328)
+    video = fixture.write_video(tmp_path / "clip.mp4", pages=[page])
+
+    readings = pipeline.read_video(str(video))
+    shapes = pipeline.find_shapes(readings)
+    printed = sum(len(reading.runs) for reading in readings)
+    marks = sum(len(reading.flat_marks) for reading in readings)
+    assert printed and marks, "the fixture prints both"
+
+    # Nothing named, everything named, and one shape named something a flat mark
+    # can make nothing of: each has to add up.
+    for labels in ({}, {str(i): "4" for i in range(len(shapes))}):
+        emitted = pipeline.emit(readings, shapes, labels)
+        assert emitted.runs == printed
+        assert emitted.flats == marks
+        assert emitted.accounted
+
+
 def test_technique_marks_survive_to_the_emitted_page(tmp_path: Path) -> None:
     """
     Arcs, dashes and muted notes, drawn as the video font prints them, end up in

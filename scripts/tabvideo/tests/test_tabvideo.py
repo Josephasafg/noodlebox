@@ -22,17 +22,6 @@ from scripts.tabvideo import cli, fetch, frames, glyphs, pipeline, primitives
 from scripts.tabvideo import staff as staff_mod
 
 
-def _shapes(components: list[glyphs.Component], assignment: list[int]) -> pipeline.Shapes:
-    """A `Shapes` with the grouping stated outright, rather than clustered for it."""
-    return pipeline.Shapes(
-        every=list(components),
-        assignment=assignment,
-        centroids=[],
-        counts=[],
-        index_of={id(component): index for index, component in enumerate(components)},
-    )
-
-
 PAPER = 253
 RULE_GREY = 225
 INK = 20
@@ -647,9 +636,8 @@ def test_digits_on_different_strings_never_join() -> None:
 def _emit_one(spelled: str, labels: list[str]) -> tuple[list, "pipeline._StaffTexts"]:
     """Run one spelled token through a staff emitter, returning its texts."""
     run = _run_of(labels)
-    shapes = _shapes(run.components, list(range(len(labels))))
     emitter = pipeline._StaffTexts(_tab_staff(), 0.0)
-    emitter.add_run(run, spelled, shapes, {str(i): value for i, value in enumerate(labels)})
+    emitter.add_run(run, spelled)
     return emitter.resolve(), emitter
 
 
@@ -659,26 +647,47 @@ def test_an_impossible_fret_from_one_mark_is_dropped() -> None:
     assert emitter.unread == 1
 
 
-def test_an_impossible_fret_from_two_marks_becomes_two_notes() -> None:
+def test_an_impossible_fret_from_two_marks_becomes_a_legato_pair() -> None:
+    """
+    `79` is a hammer-on from 7 to 9, and the frets say so without any arc.
+
+    Two frets only share a run when they are printed tighter than notes are ever
+    spaced, which in this notation is a legato figure. The reference clip has 111
+    of these — `79` thirty-seven times — and engraves most of them with no arc at
+    all, so they used to come out as two unrelated notes.
+    """
     texts, _ = _emit_one("79", ["7", "9"])
-    assert [token.str for token in texts] == ["7", "9"]
+    assert [token.str for token in texts] == ["7", "9", "h"]
+
+
+def test_a_descending_pair_in_one_run_is_a_pull_off() -> None:
+    texts, _ = _emit_one("54", ["5", "4"])
+    assert [token.str for token in texts] == ["5", "4", "p"]
 
 
 def test_a_reachable_two_digit_fret_survives() -> None:
+    """Fewest tokens wins, so `12` stays fret 12 rather than becoming 1 then 2."""
     texts, _ = _emit_one("12", ["1", "2"])
     assert [token.str for token in texts] == ["12"]
 
 
-def test_three_digits_in_one_run_are_reported_rather_than_split() -> None:
+def test_three_digits_split_where_only_one_reading_is_playable() -> None:
     """
-    `911` is a fret 9 then a fret 11, and nothing in the run says where to cut.
+    `911` is a 9 hammering on to 11: `91` is off the fretboard, so nothing else fits.
 
-    On the reference clip the 9 sits closer to the first 1 than the two 1s sit to
-    each other, so spacing cannot answer it. Reading it per character would give
-    9, 1, 1 — one right note and two invented ones.
+    Spacing cannot answer this — on the reference clip the 9 sits closer to the
+    first 1 than the two 1s sit to each other — and reading it per character gives
+    9, 1, 1, one right note and two invented ones. The fretboard answers it.
     """
     texts, emitter = _emit_one("911", ["9", "1", "1"])
-    assert [token.str for token in texts] == []
+    assert [token.str for token in texts] == ["9", "11", "h"]
+    assert emitter.unread == 0
+
+
+def test_digits_with_two_equally_short_readings_are_reported_unread() -> None:
+    """`121` is a 12 then a 1, or a 1 then a 21, and the ink does not say which."""
+    texts, emitter = _emit_one("121", ["1", "2", "1"])
+    assert texts == []
     assert emitter.unread == 1
 
 
@@ -698,9 +707,8 @@ def test_a_fused_hammer_pair_becomes_two_notes_and_a_mark() -> None:
     staff = _tab_staff()
     # As wide as a real fused pair: two digits and the join, about a staff space.
     fused = _mark(100, 121, int(staff.lines[2]))
-    shapes = _shapes([fused], [0])
     emitter = pipeline._StaffTexts(staff, 0.0)
-    emitter.add_run(glyphs.Run([fused]), "4h6", shapes, {"0": "4h6"})
+    emitter.add_run(glyphs.Run([fused]), "4h6")
     texts = emitter.resolve()
     notes = [t for t in texts if t.str.isdigit()]
     marks = [t for t in texts if not t.str.isdigit()]
@@ -741,10 +749,9 @@ def _pair_with_arc(left: str, right: str) -> list:
     a = _mark(100, 107, int(staff.lines[2]))
     b = _mark(130, 137, int(staff.lines[2]))
     arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
-    shapes = _shapes([a, b, arc], [0, 1, 2])
     emitter = pipeline._StaffTexts(staff, 0.0)
-    emitter.add_run(glyphs.Run([a]), left, shapes, {"0": left, "1": right, "2": "~"})
-    emitter.add_run(glyphs.Run([b]), right, shapes, {"0": left, "1": right, "2": "~"})
+    emitter.add_run(glyphs.Run([a]), left)
+    emitter.add_run(glyphs.Run([b]), right)
     emitter.add_flat(arc, "~")
     return emitter.resolve()
 
@@ -759,12 +766,29 @@ def test_an_arc_over_a_falling_pair_is_a_pull_off() -> None:
     assert [t.str for t in texts] == ["4", "2", "p"]
 
 
-def test_an_arc_with_nothing_beside_it_stays_silent() -> None:
+def test_an_arc_with_nothing_beside_it_is_counted_rather_than_forgotten() -> None:
+    """
+    An arc can be found, clustered and named and still print nothing, because the
+    notes it reaches for are missing. That is the same silent loss as an unnamed
+    shape one layer further on, so it is counted where it can be reported.
+    """
     staff = _tab_staff()
     arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
     emitter = pipeline._StaffTexts(staff, 0.0)
     emitter.add_flat(arc, "~")
     assert emitter.resolve() == []
+    assert emitter.unattached == 1
+
+
+def test_an_arc_over_a_pair_the_run_already_joined_does_not_say_it_twice() -> None:
+    staff = _tab_staff()
+    a = _mark(100, 107, int(staff.lines[2]))
+    b = _mark(108, 115, int(staff.lines[2]))
+    arc = _mark(103, 113, int(staff.lines[2]) - 8, height=3, bow=2.5)
+    emitter = pipeline._StaffTexts(staff, 0.0)
+    emitter.add_run(glyphs.Run([a, b]), "79")
+    emitter.add_flat(arc, "~")
+    assert [t.str for t in emitter.resolve()] == ["7", "9", "h"]
 
 
 def test_an_arc_between_different_strings_is_not_a_slur() -> None:
@@ -772,10 +796,9 @@ def test_an_arc_between_different_strings_is_not_a_slur() -> None:
     a = _mark(100, 107, int(staff.lines[2]))
     b = _mark(130, 137, int(staff.lines[3]))
     arc = _mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5)
-    shapes = _shapes([a, b, arc], [0, 1, 2])
     emitter = pipeline._StaffTexts(staff, 0.0)
-    emitter.add_run(glyphs.Run([a]), "7", shapes, {"0": "7", "1": "9", "2": "~"})
-    emitter.add_run(glyphs.Run([b]), "9", shapes, {"0": "7", "1": "9", "2": "~"})
+    emitter.add_run(glyphs.Run([a]), "7")
+    emitter.add_run(glyphs.Run([b]), "9")
     emitter.add_flat(arc, "~")
     assert [t.str for t in emitter.resolve()] == ["7", "9"]
 
@@ -784,10 +807,9 @@ def test_an_arc_fused_to_its_digit_resolves_against_the_next_note() -> None:
     staff = _tab_staff()
     a = _mark(100, 112, int(staff.lines[2]))
     b = _mark(130, 137, int(staff.lines[2]))
-    shapes = _shapes([a, b], [0, 1])
     emitter = pipeline._StaffTexts(staff, 0.0)
-    emitter.add_run(glyphs.Run([a]), "4~", shapes, {"0": "4~", "1": "2"})
-    emitter.add_run(glyphs.Run([b]), "2", shapes, {"0": "4~", "1": "2"})
+    emitter.add_run(glyphs.Run([a]), "4~")
+    emitter.add_run(glyphs.Run([b]), "2")
     assert [t.str for t in emitter.resolve()] == ["4", "2", "p"]
 
 
@@ -886,10 +908,9 @@ def test_a_flat_marks_own_curve_outranks_its_label() -> None:
     b = _mark(130, 137, int(staff.lines[2]))
 
     # Bowed but labelled as a dash: still a slur.
-    shapes = _shapes([a, b], [0, 1])
     emitter = pipeline._StaffTexts(staff, 0.0)
-    emitter.add_run(glyphs.Run([a]), "7", shapes, {"0": "7", "1": "9"})
-    emitter.add_run(glyphs.Run([b]), "9", shapes, {"0": "7", "1": "9"})
+    emitter.add_run(glyphs.Run([a]), "7")
+    emitter.add_run(glyphs.Run([b]), "9")
     emitter.add_flat(_mark(110, 126, int(staff.lines[2]) - 8, height=3, bow=2.5), "-")
     assert [t.str for t in emitter.resolve()] == ["7", "9", "h"]
 

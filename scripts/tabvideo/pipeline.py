@@ -17,7 +17,7 @@ a policy question, and it does not belong in the recognition path. See
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -514,6 +514,51 @@ ARC_REACH = 2.5
 SAME_STRING_TOL = 0.6
 
 
+def _readings_of(digits: str) -> list[list[str]]:
+    """Every way a string of digits divides into playable frets."""
+    if not digits:
+        return [[]]
+    out: list[list[str]] = []
+    for width in (1, 2):
+        head = digits[:width]
+        if len(head) < width:
+            continue
+        if width == 2 and head[0] == "0":
+            continue  # no fret is printed with a leading zero
+        if int(head) > MAX_FRET:
+            continue
+        out.extend([head] + rest for rest in _readings_of(digits[width:]))
+    return out
+
+
+def fret_sequence(digits: str) -> list[str] | None:
+    """
+    What a run of digits says, or None when nothing here can say.
+
+    Runs form from ink printed closer together than notes ever are — under a
+    glyph height, against 1.4 upwards between notes — so a run is usually one
+    number. It is not always: a legato pair is engraved tight, tighter in fact
+    than the digits of some two-digit frets, and the reference clip has 111 of
+    them. `79` is a hammer-on from 7 to 9, not a fret; `911` is a 9 hammering to
+    11, which is the shape of the notation the reader was losing.
+
+    Fewest tokens wins, which is the same assumption the grouping made in the
+    first place: digits belong to one number unless they cannot. That keeps
+    every legal two-digit fret reading as itself, and only splits where the
+    joined reading is off the fretboard. Where two shortest readings tie —
+    `121` is a 12 then a 1, or a 1 then a 21, and nothing in the ink says which —
+    the answer is None and the run is reported unread. Splitting per character
+    instead, as this used to, spells `911` as 9, 1, 1: one right note and two
+    invented ones.
+    """
+    every = _readings_of(digits)
+    if not every:
+        return None
+    fewest = min(len(reading) for reading in every)
+    shortest = [reading for reading in every if len(reading) == fewest]
+    return shortest[0] if len(shortest) == 1 else None
+
+
 # Above this bow (see `glyphs._bow`) a flat mark is a slur arc; below, a slide
 # dash. The pixels decide rather than the label, because arcs and dashes
 # normalise into near-identical templates and can share one cluster — one label
@@ -561,7 +606,12 @@ class _StaffTexts:
         self.marks: list[primitives.Text] = []
         # Arcs whose direction is not decided yet: (anchor cx, from, to).
         self.arcs: list[tuple[float, _Note | None, _Note | None]] = []
+        # Pairs a tightly printed run already joined, so an arc over the same two
+        # notes does not print a second `h`.
+        self.joined: list[tuple[_Note, _Note]] = []
         self.unread = 0
+        self.unattached = 0
+        self.ignored = 0
 
     def note(self, text: str, x0: float, x1: float, baseline: float, height: float) -> _Note:
         item = primitives.Text(str=text, x=x0 + self.dx, y=baseline, fontSize=height, width=x1 - x0)
@@ -602,9 +652,7 @@ class _StaffTexts:
             )
         )
 
-    def add_run(
-        self, run: glyphs.Run, spelled: str, shapes: Shapes, labels: dict[str, str]
-    ) -> None:
+    def add_run(self, run: glyphs.Run, spelled: str) -> None:
         x0, x1 = float(run.x0), float(run.x1)
         baseline, height = run.baseline, float(run.height)
         width = x1 - x0
@@ -612,34 +660,36 @@ class _StaffTexts:
         def span(i: int, j: int) -> tuple[float, float]:
             return x0 + width * i / len(spelled), x0 + width * j / len(spelled)
 
-        if spelled.isdigit() and int(spelled) > MAX_FRET:
-            if len(run.components) == 1:
-                # One mark that reads as an impossible fret is a pair the splitter
-                # failed to cut. Reporting nothing keeps it in the unread count,
-                # as lost confidence rather than a wrong note on the fretboard.
+        if spelled.isdigit():
+            frets = fret_sequence(spelled)
+            if frets is None or (len(frets) > 1 and len(run.components) == 1):
+                # Either nothing says where one number ends, or one mark reads as
+                # an impossible fret — a pair the splitter failed to cut, whose
+                # digits have no boundary to place notes against. Both are kept
+                # in the unread count, as lost confidence rather than a wrong
+                # note on the fretboard.
                 self.unread += 1
                 return
-            if len(run.components) > 2:
-                # Three or more digits are at least two numbers, and nothing here
-                # says where one ends. "911" is a fret 9 then a fret 11, printed
-                # with the 9 closer to the 1 than the two 1s are to each other, so
-                # the gaps do not answer it either. Splitting per character would
-                # spell it 9, 1, 1 — one right note and two invented ones — so it
-                # is reported unread instead.
-                self.unread += 1
+            if len(frets) == 1:
+                self.note(spelled, x0, x1, baseline, height)
                 return
-            # Grouping happens before the characters are known, so a pair of
-            # single-digit notes printed close together can arrive as one run.
-            # The impossible number is the tell; each character goes back
-            # separately for the parser to place as its own onset.
-            for glyph in run.components:
-                self.note(
-                    labels[str(shapes.label_of(glyph))],
-                    float(glyph.x0),
-                    float(glyph.x1),
-                    float(glyph.y1),
-                    float(glyph.height),
-                )
+            # Several frets inside one run, on one string, printed tighter than
+            # notes are ever spaced. In this notation that means a legato figure:
+            # the pair is engraved as one cluster because it is played as one
+            # gesture. Which way it goes is in the frets, so no arc is needed —
+            # and the clip engraves most of these without one, which is why they
+            # came out as separate notes with no articulation at all.
+            at = 0
+            made: list[_Note] = []
+            for fret in frets:
+                made.append(self.note(fret, *span(at, at + len(fret)), baseline, height))
+                at += len(fret)
+            for first, second in zip(made, made[1:]):
+                if first.fret is None or second.fret is None or first.fret == second.fret:
+                    continue
+                self.legato("h" if second.fret > first.fret else "p", (first.cx + second.cx) / 2)
+                # An arc over the same pair would otherwise say it twice.
+                self.joined.append((first, second))
             return
 
         if match := _LEGATO_PAIR.match(spelled):
@@ -715,8 +765,12 @@ class _StaffTexts:
                 self.arcs.append((float(flat.cx), None, None))
             else:
                 self.slide(float(flat.cx))
-        # Any other name on a flat mark says nothing a fret token could not, and
-        # an unnamed one is decoration; both are simply not emitted.
+            return
+        # Any other name on a flat mark says nothing a technique could act on, so
+        # it prints nothing — but it is counted, because a shape named wrongly
+        # enough to land here would otherwise take the whole clip's articulation
+        # with it and leave the totals looking untroubled.
+        self.ignored += 1
 
     def _nearest(self, cx: float, direction: int, like: _Note | None) -> _Note | None:
         """The closest note on the given side, on the same string when known."""
@@ -741,11 +795,16 @@ class _StaffTexts:
             if to is None:
                 to = self._nearest(cx, +1, frm)
             if frm is None or to is None or frm.fret is None or to.fret is None:
-                continue  # not enough to say what the slur does; leave it silent
-            if abs(frm.baseline - to.baseline) > self.spacing * SAME_STRING_TOL:
-                continue  # joins nothing on one string, so it is not a slur
-            if to.fret == frm.fret:
+                self.unattached += 1  # nothing to say what the slur does
                 continue
+            if abs(frm.baseline - to.baseline) > self.spacing * SAME_STRING_TOL:
+                self.unattached += 1  # joins nothing on one string, so not a slur
+                continue
+            if to.fret == frm.fret:
+                self.unattached += 1  # a slur between one fret and itself says nothing
+                continue
+            if (frm, to) in self.joined:
+                continue  # the run it spans already printed this legato
             self.legato("h" if to.fret > frm.fret else "p", (frm.cx + to.cx) / 2)
         return [note.item for note in self.notes] + self.marks
 
@@ -774,12 +833,62 @@ class Emitted:
     on an unread mark being a visible gap rather than a quiet omission.
     """
 
+    unattached: int = 0
+    """
+    Named slur arcs that found no pair of notes to join, so printed nothing.
+
+    The same omission one layer further on: an arc can be found, clustered and
+    named, and still evaporate because the notes it reaches for are missing, sit
+    on different strings, or read as the same fret. Counting it is what turns
+    "the articulation sounds wrong" into a number that says how much of it never
+    made it out.
+    """
+
+    ignored: int = 0
+    """Flat marks whose name is not a technique, so nothing could be made of them."""
+
+    runs: int = 0
+    """Printed tokens seen, whether or not anything came of them."""
+
+    flats: int = 0
+    """Flat technique marks seen, whether or not anything came of them."""
+
+    contested: dict[str, int] = field(default_factory=dict)
+    """
+    Digit runs that had more than one playable reading, by what was printed.
+
+    `24` is fret 24 or a hammer-on from 2 to 4, and both are on the fretboard, so
+    the shortest reading is taken and this records that a choice was made. The
+    reference clip prints five of those, and every one of them is the hammer-on
+    — which is invisible in a count of notes and obvious in this list.
+    """
+
+    @property
+    def accounted(self) -> bool:
+        """
+        Whether every run and flat mark ended up somewhere, printed or counted.
+
+        The whole class of fault this guards against is an output that quietly
+        loses something: the reader lost all 73 of the clip's arcs and dashes
+        while every count it reported looked healthy, because the code path that
+        dropped them incremented nothing. Names were measured at 24 correct out
+        of 24 through all of it. So the counts have to add up, and a test says so.
+        """
+        return self.runs >= self.unspelled and self.flats >= (
+            self.silent + self.unattached + self.ignored
+        )
+
 
 def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emitted:
     """Build page primitives, reporting what could not be spelled or attached."""
     pages: list[primitives.PagePrimitives] = []
     unspelled = 0
     silent = 0
+    unattached = 0
+    ignored = 0
+    runs = 0
+    flats = 0
+    contested: dict[str, int] = {}
     for reading in readings:
         height, width = reading.page.image.shape
         declared_width, declared_height, dx = primitives.page_frame(width, height)
@@ -816,6 +925,7 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
             for staff_of_run, run in reading.runs:
                 if staff_of_run is not one:
                     continue
+                runs += 1
                 if run.truncated:
                     # Part of this number was never captured, so any reading of
                     # it would be a wrong note rather than a gap.
@@ -825,10 +935,13 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
                 if spelled is None:
                     unspelled += 1
                     continue
-                emitter.add_run(run, spelled, shapes, labels)
+                if spelled.isdigit() and len(_readings_of(spelled)) > 1:
+                    contested[spelled] = contested.get(spelled, 0) + 1
+                emitter.add_run(run, spelled)
             for staff_of_flat, flat in reading.flat_marks:
                 if staff_of_flat is not one:
                     continue
+                flats += 1
                 label = labels.get(str(shapes.label_of(flat)))
                 if label:
                     emitter.add_flat(flat, label)
@@ -836,6 +949,8 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
                     silent += 1
             unspelled += emitter.unread
             texts.extend(emitter.resolve())
+            unattached += emitter.unattached
+            ignored += emitter.ignored
         pages.append(
             primitives.PagePrimitives(
                 pageIndex=reading.page.index,
@@ -845,4 +960,13 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
                 texts=texts,
             )
         )
-    return Emitted(pages=pages, unspelled=unspelled, silent=silent)
+    return Emitted(
+        pages=pages,
+        unspelled=unspelled,
+        silent=silent,
+        unattached=unattached,
+        ignored=ignored,
+        runs=runs,
+        flats=flats,
+        contested=contested,
+    )
