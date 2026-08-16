@@ -109,6 +109,8 @@ class Job:
     unspelled: int = 0
     silent_techniques: int = 0
     """Slur arcs and slide dashes dropped for want of a name, which used to vanish."""
+    split_runs: int = 0
+    """Notes a model read as a legato pair rather than the fret they also spell."""
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def cleanup(self) -> None:
@@ -186,9 +188,7 @@ def _unresolved(job: Job) -> list[int]:
     return [
         index
         for index in range(len(job.shapes))
-        if str(index) not in job.labels
-        and index not in job.remembered
-        and index not in job.auto
+        if str(index) not in job.labels and index not in job.remembered and index not in job.auto
     ]
 
 
@@ -218,7 +218,9 @@ def _read_shapes(job: Job) -> None:
     job.stage = "reading the printed shapes"
     job.progress = 0.0
     try:
-        asked = namer_mod.build_jobs(job.readings, job.shapes, unresolved, exemplars=namer.exemplars)
+        asked = namer_mod.build_jobs(
+            job.readings, job.shapes, unresolved, exemplars=namer.exemplars
+        )
 
         def progressed(done: int, total: int) -> None:
             job.progress = done / max(1, total)
@@ -312,6 +314,40 @@ def _run(job: Job) -> None:
             job.cleanup()
 
 
+def _read_music(job: Job, labels: dict[str, str]) -> pipeline.Emitted:
+    """
+    Build the score, asking about the runs the reading itself argues against.
+
+    A run of digits that spells a playable fret is usually that fret, and nothing
+    in the ink separates `24` from a hammer-on from 2 to 4. `suspect_patterns`
+    finds the handful where the piece's own fret histogram disagrees with the
+    reading — four on the reference clip, and all four are legato pairs — and a
+    vision model is asked about those and only those, one question per pattern.
+
+    Without a model, or where it is not sure, the fret reading stands. This is
+    the only place a model may change a note rather than name a shape, so it may
+    only overturn, never decide, and only over the short list.
+    """
+    assert job.shapes is not None
+    emitted = pipeline.emit(job.readings, job.shapes, labels)
+    namer = namer_mod.Namer.from_env()
+    if namer is None:
+        return emitted
+
+    patterns = pipeline.suspect_patterns(emitted)
+    if not patterns:
+        return emitted
+
+    job.stage = "checking the notes that could be read two ways"
+    jobs = namer_mod.build_run_jobs(job.readings, job.shapes, labels, patterns, namer.exemplars)
+    try:
+        legato = {out.text for out in namer.read_runs(jobs) if out.legato}
+    except Exception as problem:  # noqa: BLE001 - a check must never fail the import
+        print(f"tabvideo: could not check contested runs: {problem}", file=sys.stderr)
+        return emitted
+    return pipeline.emit(job.readings, job.shapes, labels, legato=legato) if legato else emitted
+
+
 def _finish(job: Job, submitted: dict[str, str]) -> None:
     """Emit primitives from whatever names are known, and remember them."""
     assert job.shapes is not None
@@ -322,17 +358,15 @@ def _finish(job: Job, submitted: dict[str, str]) -> None:
     labels.update(submitted)
     job.labels = labels
 
-    emitted = pipeline.emit(job.readings, job.shapes, labels)
-    pages, unspelled = emitted.pages, emitted.unspelled
+    emitted = _read_music(job, labels)
     job.silent_techniques = emitted.silent
-    job.pages, job.unspelled = pages, unspelled
+    job.split_runs = sum(emitted.split.values())
+    job.pages, job.unspelled = emitted.pages, emitted.unspelled
 
     # Names this job worked out are worth keeping; ones it took from the bank are
     # already in it, and re-storing them would just duplicate. A person's answer
     # is banked as theirs and overrides the model's reading of the same shape.
-    machine = {
-        str(index): name for index, name in job.auto.items() if str(index) not in submitted
-    }
+    machine = {str(index): name for index, name in job.auto.items() if str(index) not in submitted}
     if machine or submitted:
         remembered = bank_mod.load()
         if machine:
@@ -411,6 +445,9 @@ def _status(job: Job, *, include_shapes: bool) -> dict[str, Any]:
         # Reported separately because it means something different to a reader: the
         # notes are all there and correct, but the piece has lost its articulation.
         payload["silentTechniqueCount"] = job.silent_techniques
+        # The one place a model changed a note rather than named a shape, so it
+        # is said out loud rather than left to be noticed by ear.
+        payload["splitRunCount"] = job.split_runs
     return payload
 
 
@@ -470,7 +507,9 @@ def name_shapes(job_id: str, request: LabelsRequest) -> dict[str, Any]:
         if len(name) > 5 or not pipeline.LABEL_RE.match(name):
             # Refused rather than trimmed: a silently altered name would become
             # a silently wrong note everywhere that shape occurs.
-            raise HTTPException(status_code=400, detail=f"{value!r} is not a name a shape can have.")
+            raise HTTPException(
+                status_code=400, detail=f"{value!r} is not a name a shape can have."
+            )
         cleaned[str(int(key))] = name
     with job.lock:
         if job.state == "done":

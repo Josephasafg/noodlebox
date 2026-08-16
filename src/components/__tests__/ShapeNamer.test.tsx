@@ -36,6 +36,7 @@ function job(shapes: VideoShape[]): VideoJob {
     pages: null,
     unreadCount: null,
     silentTechniqueCount: null,
+    splitRunCount: null,
   }
 }
 

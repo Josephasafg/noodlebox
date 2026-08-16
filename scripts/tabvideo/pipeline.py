@@ -17,6 +17,7 @@ a policy question, and it does not belong in the recognition path. See
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 import cv2
@@ -84,6 +85,13 @@ PAPER_PERCENTILE = 95
 # about the wrong subject with no sign that anything went wrong.
 CONTEXT_OUTLINE = (0, 0, 255)
 CONTEXT_OUTLINE_WIDTH = 2
+
+# How much of the bar to keep either side of a contested run, in staff spacings.
+# Twenty puts a whole bar in frame at 1080p. The question there is whether two
+# digits are one number or two notes, and the evidence for that is entirely
+# outside the digits: the spacing of the notes around them, and how high on the
+# neck the piece is playing. A tight crop shows neither.
+RUN_CONTEXT_MARGIN = 20.0
 
 
 class ScrollingVideo(Exception):
@@ -425,6 +433,96 @@ def shape_context(
     return out
 
 
+def run_context(
+    readings: list[Reading],
+    run: glyphs.Run,
+    scale: int = 3,
+) -> np.ndarray | None:
+    """
+    A whole bar around one printed token, with the token outlined.
+
+    Much wider than `shape_context`, and for the opposite reason: the question is
+    not what a mark is but whether two digits are one number, and nothing inside
+    the digits answers that. What answers it is the bar — how far apart the other
+    notes on this string sit, how high on the neck the piece is playing, whether
+    the group is spaced like one onset or two. Neighbouring strings are kept for
+    the same reason, so nothing is painted out.
+    """
+    if not run.components:
+        return None
+    reading = _owners(readings).get(id(run.components[0]))
+    if reading is None:
+        return None
+    one, _ = _locate(reading, run.components[0])
+    if one is None:
+        return None
+
+    image = reading.page.image
+    margin = one.spacing * RUN_CONTEXT_MARGIN
+    left = max(0, int(round(run.x0 - margin)))
+    right = min(image.shape[1], int(round(run.x1 + margin)))
+    top = max(0, int(round(one.top - one.spacing * 2)))
+    bottom = min(image.shape[0], int(round(one.bottom + one.spacing * 2)))
+    if right - left < 1 or bottom - top < 1:
+        return None
+
+    crop = image[top:bottom, left:right]
+    if crop.size == 0:
+        return None
+    out = cv2.cvtColor(
+        cv2.resize(
+            crop,
+            (crop.shape[1] * scale, crop.shape[0] * scale),
+            interpolation=cv2.INTER_NEAREST,
+        ),
+        cv2.COLOR_GRAY2BGR,
+    )
+    y0 = min(component.y0 for component in run.components)
+    y1 = max(component.y1 for component in run.components)
+    cv2.rectangle(
+        out,
+        ((run.x0 - left) * scale - 1, (y0 - top) * scale - 1),
+        ((run.x1 - left) * scale, (y1 - top) * scale),
+        CONTEXT_OUTLINE,
+        CONTEXT_OUTLINE_WIDTH,
+    )
+    return out
+
+
+def contested_runs(
+    readings: list[Reading], shapes: Shapes, labels: dict[str, str], patterns: list[str]
+) -> dict[str, list[glyphs.Run]]:
+    """
+    Every printed run spelling one of `patterns`, a system at a time.
+
+    Ordered so that taking the first few gives printings from as many different
+    systems as possible, for the same reason `shape_members` does: anything asked
+    to judge these should be shown three bars rather than one bar three times.
+    """
+    wanted = set(patterns)
+    by_system: dict[str, list[list[glyphs.Run]]] = {}
+    for reading in readings:
+        here: dict[str, list[glyphs.Run]] = {}
+        for _, run in reading.runs:
+            if run.truncated:
+                continue
+            spelled = glyphs.spell(run, shapes.assignment, shapes.index_of, labels)
+            if spelled in wanted:
+                here.setdefault(spelled, []).append(run)
+        for spelled, found in here.items():
+            by_system.setdefault(spelled, []).append(found)
+
+    out: dict[str, list[glyphs.Run]] = {}
+    for spelled, queues in by_system.items():
+        ordered: list[glyphs.Run] = []
+        depth = 0
+        while any(len(queue) > depth for queue in queues):
+            ordered.extend(queue[depth] for queue in queues if len(queue) > depth)
+            depth += 1
+        out[spelled] = ordered
+    return out
+
+
 def component_crop(
     readings: list[Reading], component: glyphs.Component, scale: int = 6, pad: int = 2
 ) -> np.ndarray | None:
@@ -531,7 +629,7 @@ def _readings_of(digits: str) -> list[list[str]]:
     return out
 
 
-def fret_sequence(digits: str) -> list[str] | None:
+def fret_sequence(digits: str, *, split: bool = False) -> list[str] | None:
     """
     What a run of digits says, or None when nothing here can say.
 
@@ -550,13 +648,53 @@ def fret_sequence(digits: str) -> list[str] | None:
     the answer is None and the run is reported unread. Splitting per character
     instead, as this used to, spells `911` as 9, 1, 1: one right note and two
     invented ones.
+
+    `split` asks for the shortest reading that is *more* than one fret, for the
+    case fewest-tokens cannot reach: `24` is fret 24 and also a hammer-on from 2
+    to 4, both on the fretboard, and no property of the ink separates them. Who
+    is allowed to say so is a caller's decision — see `suspect_patterns`.
     """
     every = _readings_of(digits)
+    if split:
+        every = [reading for reading in every if len(reading) > 1]
     if not every:
         return None
     fewest = min(len(reading) for reading in every)
     shortest = [reading for reading in every if len(reading) == fewest]
     return shortest[0] if len(shortest) == 1 else None
+
+
+def suspect_patterns(emitted: "Emitted") -> list[str]:
+    """
+    Digit runs read as a fret that the piece itself argues against.
+
+    Nothing outside the music can settle `24`. The music can. A tab whose notes
+    live between frets 2 and 12 does not visit fret 24 five times, and its 2s and
+    4s number in the hundreds — so the joined reading being rarer than either
+    half of the split one is the tell. On the reference clip this picks out four
+    patterns and every one of them is a legato pair engraved without an arc,
+    while leaving `10` (95 times) and `12` (94 times) alone.
+
+    This is a reason to look, not a reason to act. What comes back is the short
+    list worth putting in front of a reader — a person, or a model that can see
+    the bar — and never a decision on its own.
+    """
+    counted: dict[int, int] = {}
+    for page in emitted.pages:
+        for text in page.texts:
+            bare = text.str.strip("()")
+            if bare.isdigit():
+                counted[int(bare)] = counted.get(int(bare), 0) + 1
+
+    out = []
+    for text in sorted(emitted.contested, key=lambda t: -emitted.contested[t]):
+        joined = fret_sequence(text)
+        split = fret_sequence(text, split=True)
+        if joined is None or split is None or len(joined) != 1:
+            continue  # already split, or nothing playable to compare against
+        if counted.get(int(text), 0) < min(counted.get(int(fret), 0) for fret in split):
+            out.append(text)
+    return out
 
 
 # Above this bow (see `glyphs._bow`) a flat mark is a slur arc; below, a slide
@@ -652,7 +790,7 @@ class _StaffTexts:
             )
         )
 
-    def add_run(self, run: glyphs.Run, spelled: str) -> None:
+    def add_run(self, run: glyphs.Run, spelled: str, split: bool = False) -> None:
         x0, x1 = float(run.x0), float(run.x1)
         baseline, height = run.baseline, float(run.height)
         width = x1 - x0
@@ -661,7 +799,7 @@ class _StaffTexts:
             return x0 + width * i / len(spelled), x0 + width * j / len(spelled)
 
         if spelled.isdigit():
-            frets = fret_sequence(spelled)
+            frets = fret_sequence(spelled, split=split)
             if frets is None or (len(frets) > 1 and len(run.components) == 1):
                 # Either nothing says where one number ends, or one mark reads as
                 # an impossible fret — a pair the splitter failed to cut, whose
@@ -863,6 +1001,14 @@ class Emitted:
     — which is invisible in a count of notes and obvious in this list.
     """
 
+    split: dict[str, int] = field(default_factory=dict)
+    """
+    Contested runs a caller told this to read as a legato pair, by what was printed.
+
+    Recorded because it is the one place something outside the ink changed a
+    note. Everything else here can be re-derived from the frames; this cannot.
+    """
+
     @property
     def accounted(self) -> bool:
         """
@@ -879,8 +1025,20 @@ class Emitted:
         )
 
 
-def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emitted:
-    """Build page primitives, reporting what could not be spelled or attached."""
+def emit(
+    readings: list[Reading],
+    shapes: Shapes,
+    labels: dict[str, str],
+    legato: Collection[str] = (),
+) -> Emitted:
+    """
+    Build page primitives, reporting what could not be spelled or attached.
+
+    `legato` names printed digit strings to read as a legato pair rather than as
+    the one fret they also spell — `{"24"}` makes every printed `24` a hammer-on
+    from 2 to 4. Nothing in the ink can decide that (see `fret_sequence`), so it
+    is a caller's to decide and it is recorded in what comes back.
+    """
     pages: list[primitives.PagePrimitives] = []
     unspelled = 0
     silent = 0
@@ -889,6 +1047,7 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
     runs = 0
     flats = 0
     contested: dict[str, int] = {}
+    split: dict[str, int] = {}
     for reading in readings:
         height, width = reading.page.image.shape
         declared_width, declared_height, dx = primitives.page_frame(width, height)
@@ -935,9 +1094,13 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
                 if spelled is None:
                     unspelled += 1
                     continue
+                cut = False
                 if spelled.isdigit() and len(_readings_of(spelled)) > 1:
                     contested[spelled] = contested.get(spelled, 0) + 1
-                emitter.add_run(run, spelled)
+                    cut = spelled in legato
+                    if cut:
+                        split[spelled] = split.get(spelled, 0) + 1
+                emitter.add_run(run, spelled, split=cut)
             for staff_of_flat, flat in reading.flat_marks:
                 if staff_of_flat is not one:
                     continue
@@ -969,4 +1132,5 @@ def emit(readings: list[Reading], shapes: Shapes, labels: dict[str, str]) -> Emi
         runs=runs,
         flats=flats,
         contested=contested,
+        split=split,
     )

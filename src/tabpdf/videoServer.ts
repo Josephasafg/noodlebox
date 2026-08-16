@@ -75,6 +75,8 @@ export interface VideoJob {
   unreadCount: number | null
   /** Slur arcs and slide dashes found but not identified, so dropped. */
   silentTechniqueCount: number | null
+  /** Notes a model read as a legato pair rather than the fret they also spell. */
+  splitRunCount: number | null
 }
 
 const STATES: readonly VideoJobState[] = [
@@ -150,6 +152,7 @@ function jobFrom(value: unknown): VideoJob {
     pages: raw.primitives === undefined ? null : pagesFrom(raw.primitives),
     unreadCount: count(raw.unreadCount),
     silentTechniqueCount: count(raw.silentTechniqueCount),
+    splitRunCount: count(raw.splitRunCount),
   }
 }
 

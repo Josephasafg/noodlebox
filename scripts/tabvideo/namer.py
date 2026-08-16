@@ -19,6 +19,14 @@ The safety property is kept by construction rather than by trust:
   agree. A disagreement is evidence the shape is not being read reliably, which
   is exactly when a guess is worst, so it abstains rather than taking a majority.
 
+There is a second, narrower question here, and its posture is the opposite one.
+`24` is fret 24 and equally a hammer-on from 2 to 4; nothing in the ink separates
+them, so `read_runs` shows the model the whole bar and asks which it is. That
+reading is already right 270 times in 275, so the model is not deciding it, it is
+being asked whether to overturn it, and only for the handful of patterns the
+piece's own fret histogram argues against. Anything short of every look being
+sure leaves the note alone. See `_decide_reading`.
+
 Configured entirely from the environment — in practice from the project's `.env`,
 which `env.py` loads before the service starts — and absent configuration this
 module does nothing at all: `Namer.from_env()` returns None and the caller keeps
@@ -120,6 +128,56 @@ certain.
 
 ASK = "What is this mark?"
 
+READING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "shows": {"type": "string"},
+        "reads": {"type": "string", "enum": ["one number", "two notes"]},
+        "certain": {"type": "boolean"},
+    },
+    "required": ["shows", "reads", "certain"],
+    "additionalProperties": False,
+}
+
+READING_INSTRUCTIONS = """\
+You are reading printed guitar tablature photographed from a video frame and \
+magnified. Each image is one bar, with a group of digits outlined in red.
+
+The outlined digits are one of two things, and you are being asked which:
+
+- one fret number, printed as two digits, played as a single note
+- two frets played one straight after the other as a legato figure — a hammer-on \
+or a pull-off — which this notation engraves with the two numbers pressed hard \
+together, often with no arc drawn over them
+
+Nothing inside the digits tells these apart: the two are printed identically, \
+and the gap between them is the same either way. The bar around them is the \
+evidence, so read that:
+
+- Compare the outlined number with every other number in the bar. Tablature is \
+written for one hand in one position, so a bar whose notes all sit low on the \
+neck does not contain one number far above the rest. If the outlined number is \
+an outlier and its two digits are frets the bar plays constantly, it is two notes.
+- Look for the same figure elsewhere in the bar with an arc drawn over it. This \
+notation draws the arc on some legato pairs and leaves it off others, so a `4` \
+and a `2` under an arc beside the outlined group is direct evidence that the \
+music here is legato pairs.
+- Look at where notes fall along the line. A single note takes one of those \
+positions; a legato pair is two notes pressed into one of them.
+
+Answer with a JSON object: `shows` describing the bar in a few words, `reads` \
+being exactly "one number" or "two notes", and `certain` saying whether you are \
+sure.
+
+Say "two notes" when the bar makes that the clear reading, and "one number" when \
+it does not. Set `certain` to false only where you genuinely cannot tell from \
+what is in front of you — if your own description of the bar already answers the \
+question, then you can tell, and saying otherwise throws the answer away.
+
+Only "two notes" with `certain` true changes anything: every other answer leaves \
+the reading exactly as the reader had it, which is right far more often than not.
+"""
+
 
 @dataclass(frozen=True)
 class Exemplar:
@@ -157,6 +215,30 @@ class Outcome:
     answers: list[Answer] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class RunJob:
+    """One contested digit pattern, with bars where it was printed."""
+
+    text: str
+    """What the digits spell as a single fret, such as `24`."""
+    split: list[str]
+    """The other reading, such as `["2", "4"]`."""
+    count: int
+    """How many times the pattern occurs, which is the blast radius of an error."""
+    bars: list[bytes] = field(default_factory=list)
+    """PNG renders, one per printing, each with the digits outlined."""
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """Whether a contested pattern is really a legato pair."""
+
+    text: str
+    legato: bool
+    reason: str
+    answers: list[Answer] = field(default_factory=list)
+
+
 def _encode(image: np.ndarray | None) -> bytes | None:
     if image is None or image.size == 0:
         return None
@@ -179,9 +261,42 @@ def build_jobs(
             mark = _encode(pipeline.component_crop(readings, member))
             if mark is None:
                 continue
-            rendered.append(Exemplar(mark=mark, context=_encode(pipeline.shape_context(readings, member))))
+            rendered.append(
+                Exemplar(mark=mark, context=_encode(pipeline.shape_context(readings, member)))
+            )
         if rendered:
             jobs.append(ShapeJob(index=index, count=shapes.counts[index], exemplars=rendered))
+    return jobs
+
+
+def build_run_jobs(
+    readings: list[pipeline.Reading],
+    shapes: pipeline.Shapes,
+    labels: dict[str, str],
+    patterns: list[str],
+    exemplars: int = DEFAULT_EXEMPLARS,
+) -> list[RunJob]:
+    """
+    Render the bars where a contested pattern was printed, commonest first.
+
+    Different printings rather than one printing looked at repeatedly, same as
+    for shapes: three views of one bar is one observation three times, and a
+    disagreement between three bars is the signal that the pattern is not always
+    the same thing — which is exactly when it must be left alone.
+    """
+    found = pipeline.contested_runs(readings, shapes, labels, patterns)
+    jobs: list[RunJob] = []
+    for text in patterns:
+        runs = found.get(text, [])
+        split = pipeline.fret_sequence(text, split=True)
+        if not runs or split is None:
+            continue
+        bars: list[bytes] = []
+        for run in runs[:exemplars]:
+            rendered = _encode(pipeline.run_context(readings, run))
+            if rendered is not None:
+                bars.append(rendered)
+        jobs.append(RunJob(text=text, split=split, count=len(runs), bars=bars))
     return jobs
 
 
@@ -325,13 +440,13 @@ class Namer:
             )
         return content
 
-    def _ask(self, exemplar: Exemplar) -> Answer:
-        """One look at one printing. Never raises."""
+    def _object(self, instructions: str, content: list[dict], schema: dict) -> tuple[dict, str]:
+        """One call, answering with the object it returned or why there is none."""
         request = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": INSTRUCTIONS},
-                {"role": "user", "content": self._content(exemplar)},
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": content},
             ],
             # The question has one right answer, so there is nothing to sample for.
             "temperature": 0,
@@ -342,25 +457,31 @@ class Namer:
         for attempt in range(2):
             body = dict(request)
             if self._guided:
-                body["extra_body"] = {"guided_json": ANSWER_SCHEMA}
+                body["extra_body"] = {"guided_json": schema}
             try:
                 response = self.client.chat.completions.create(**body)
                 break
             except Exception as problem:  # noqa: BLE001 - every failure is an abstention
                 if self._guided and attempt == 0 and _refused_the_request(problem):
                     # The server does not know `guided_json`. Drop it and try once
-                    # more before giving the shape up.
+                    # more before giving the question up.
                     self._guided = False
                     continue
-                return Answer(label=None, note=f"call failed: {problem}")
+                return {}, f"call failed: {problem}"
 
         try:
-            text = response.choices[0].message.content or ""
-            payload = json.loads(text)
+            payload = json.loads(response.choices[0].message.content or "")
         except (AttributeError, IndexError, TypeError, ValueError) as problem:
-            return Answer(label=None, note=f"unreadable answer: {problem}")
+            return {}, f"unreadable answer: {problem}"
         if not isinstance(payload, dict):
-            return Answer(label=None, note="answer was not an object")
+            return {}, "answer was not an object"
+        return payload, ""
+
+    def _ask(self, exemplar: Exemplar) -> Answer:
+        """One look at one printing. Never raises."""
+        payload, problem = self._object(INSTRUCTIONS, self._content(exemplar), ANSWER_SCHEMA)
+        if problem:
+            return Answer(label=None, note=problem)
 
         shows = payload.get("shows") if isinstance(payload.get("shows"), str) else ""
         if payload.get("certain") is not True:
@@ -369,6 +490,30 @@ class Namer:
         if label is None:
             return Answer(label=None, shows=shows, note=f"not a name: {payload.get('label')!r}")
         return Answer(label=label, shows=shows)
+
+    def _ask_reading(self, job: RunJob, bar: bytes) -> Answer:
+        """One look at one printing of a contested run. Never raises."""
+        joined = " then ".join(job.split)
+        question = (
+            f"Are the outlined digits the single fret {job.text}, "
+            f"or the frets {joined} played as a legato pair?"
+        )
+        encoded = base64.b64encode(bar).decode("ascii")
+        content = [
+            {"type": "text", "text": question},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+        ]
+        payload, problem = self._object(READING_INSTRUCTIONS, content, READING_SCHEMA)
+        if problem:
+            return Answer(label=None, note=problem)
+
+        shows = payload.get("shows") if isinstance(payload.get("shows"), str) else ""
+        if payload.get("certain") is not True:
+            return Answer(label=None, shows=shows, note="not certain")
+        reads = payload.get("reads")
+        if reads not in ("one number", "two notes"):
+            return Answer(label=None, shows=shows, note=f"not an answer: {reads!r}")
+        return Answer(label=reads, shows=shows)
 
     def _decide(self, index: int, answers: list[Answer]) -> Outcome:
         """
@@ -404,6 +549,47 @@ class Namer:
                 else:
                     answers = list(pool.map(self._ask, job.exemplars))
                     outcomes.append(self._decide(job.index, answers))
+                if on_progress is not None:
+                    on_progress(done, len(jobs))
+        return outcomes
+
+    def _decide_reading(self, job: RunJob, answers: list[Answer]) -> RunOutcome:
+        """
+        Split a contested run only when every look is sure it should be split.
+
+        The posture here is the opposite of `_decide`, on purpose. There, nothing
+        is known until the looks agree, and agreement is what produces a name.
+        Here something *is* known — the run reads as a playable fret, and across
+        the reference clip that reading is right 270 times in 275 — so the model
+        is not being asked to decide, it is being asked to overturn. One look
+        saying "one number", one look unsure, an unreachable endpoint, a spent
+        budget: all of them leave the reading alone, which is the answer that is
+        usually right anyway.
+
+        The asymmetry is what keeps the blast radius small. A pattern occurring
+        five times risks five notes if this is wrong, and only ever a pattern the
+        piece's own fret histogram already argued against.
+        """
+        offered = [answer.label for answer in answers if answer.label is not None]
+        if not offered or len(offered) < len(answers):
+            return RunOutcome(job.text, legato=False, reason="unsure", answers=answers)
+        if len(set(offered)) > 1:
+            return RunOutcome(job.text, legato=False, reason="conflict", answers=answers)
+        if offered[0] != "two notes":
+            return RunOutcome(job.text, legato=False, reason="one number", answers=answers)
+        return RunOutcome(job.text, legato=True, reason="agreed", answers=answers)
+
+    def read_runs(self, jobs: list[RunJob], on_progress=None) -> list[RunOutcome]:
+        """Decide which contested patterns are legato pairs rather than frets."""
+        deadline = time.monotonic() + self.budget
+        outcomes: list[RunOutcome] = []
+        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+            for done, job in enumerate(jobs, start=1):
+                if time.monotonic() >= deadline or not job.bars:
+                    outcomes.append(RunOutcome(job.text, legato=False, reason="budget"))
+                else:
+                    answers = list(pool.map(lambda bar: self._ask_reading(job, bar), job.bars))
+                    outcomes.append(self._decide_reading(job, answers))
                 if on_progress is not None:
                     on_progress(done, len(jobs))
         return outcomes

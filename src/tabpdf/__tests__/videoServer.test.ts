@@ -108,6 +108,26 @@ describe('reading a job', () => {
     expect(job.title).toBe('A Lesson')
   })
 
+  it('carries through the counts that say how the reading went', async () => {
+    // Both are things a reader cannot hear from the notes alone: articulation
+    // that was found and dropped, and a number the service decided was really
+    // two. Losing either on the way to the app makes it invisible again.
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        id: 'j1',
+        state: 'done',
+        unreadCount: 3,
+        silentTechniqueCount: 73,
+        splitRunCount: 5,
+      }),
+    )
+    const job = await readVideoJob('j1')
+    expect(job.unreadCount).toBe(3)
+    expect(job.silentTechniqueCount).toBe(73)
+    expect(job.splitRunCount).toBe(5)
+  })
+
   it('treats a state it does not know as an error rather than passing it on', async () => {
     vi.stubGlobal('fetch', respond({ id: 'j1', state: 'transcending', stage: '' }))
     expect((await readVideoJob('j1')).state).toBe('error')

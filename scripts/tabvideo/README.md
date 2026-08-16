@@ -192,7 +192,60 @@ bow at most 0.5px, 45 of the 46 arcs bow 0.9–1.8px, and the one shallow arc at
 
 A lone arc cannot say which way it goes. Its direction is resolved from the two
 notes it joins — rising is a hammer-on, falling a pull-off — and an arc whose
-neighbours cannot be read stays silent rather than guessing.
+neighbours cannot be read is counted rather than dropped, because that count is
+the only thing that can say articulation went missing.
+
+### Most legato figures have no arc at all
+
+The bigger source of hammer-ons is not the arcs, it is the numbers. A legato pair
+is engraved with its two frets pressed together, and this font usually draws no
+arc over them: `79` is a hammer-on from 7 to 9, and `911` is a 9 hammering to 11.
+The clip prints 111 of these and every one used to come out as unrelated notes,
+or — where the digits happened to spell a playable fret — as one wrong note.
+
+Spacing cannot separate them from a real two-digit fret. Measured on the clip,
+digits inside a legato pair sit at gap/height 0.00–0.07 and digits inside a
+genuine two-digit fret at 0.00–0.74, median 0.07: not two overlapping
+populations, the same population. The fretboard separates them instead. A run's
+digits are divided into playable frets, fewest tokens winning, which is the
+assumption the grouping already made — digits belong to one number unless they
+cannot. `91` is no fret, so `911` has one short reading. A tie (`121` is a 12 then
+a 1, or a 1 then a 21) is reported unread. That recovered 114 hammer-ons, 7
+pull-offs and 14 previously unreadable runs.
+
+### The last case only a reader can settle
+
+`24` is fret 24, and equally a hammer-on from 2 to 4. Both are on the fretboard,
+so fewest-tokens takes the fret, and on this clip that is wrong five times.
+
+Nothing in the ink decides it — but the piece does. A tab whose notes live between
+frets 2 and 12 does not visit fret 24 five times while playing hundreds of 2s and
+4s, so `suspect_patterns` flags a contested reading whose joined fret is rarer
+than either half of its split one. On the reference clip that is four patterns out
+of the twenty contested, and it leaves `10` (95 times) and `12` (94 times) alone.
+
+Those four, and only those, go to the vision model as one question each: a whole
+bar rendered with the digits outlined, and "the single fret 24, or the frets 2
+then 4 played as a legato pair?". The posture is inverted from shape naming
+deliberately. There, nothing is known and agreement produces a name. Here the
+fret reading is already right 270 times in 275, so the model may only *overturn*:
+one look saying "one number", one look unsure, a dead endpoint, a spent budget —
+all leave the note as it was. That keeps the blast radius to a pattern the piece's
+own histogram already argued against.
+
+Measured against Qwen 2.5-VL-72B on the reference clip, and stable over three
+runs: `24` split, unanimous over three different bars ("bar with repeated 4-2
+legato pairs"); `18`, `19` and `20` left alone, each correctly ("bar with high
+frets, including 18, 17, 16, and 19"). Fret 24 leaves the histogram entirely and
+five more hammer-ons appear.
+
+The first version of that prompt returned nothing but abstentions while
+describing the bar accurately — one answer read "notes mostly low on the neck,
+with a 24 and a 4-2 legato" and then set `certain` false. It had been told that
+hesitation was the safe answer once too often. Telling it instead that a
+description which already answers the question is not an uncertain one, and
+naming the specific evidence to look for, is what turned three abstentions into
+three agreeing answers.
 
 ## Names are remembered
 

@@ -140,40 +140,19 @@ def _census(emitted: pipeline.Emitted) -> tuple[list[str], list[str]]:
             f"{emitted.flats} technique marks were found and the score has no articulation "
             f"at all. This is the failure that a perfect naming score hides."
         )
-    suspect = _suspect_frets(emitted.contested, frets)
+    if emitted.split:
+        lines.append(
+            "  read as legato pairs rather than the fret they spell: "
+            + ", ".join(f"{text} x{n}" for text, n in emitted.split.items())
+        )
+    suspect = [t for t in pipeline.suspect_patterns(emitted) if t not in emitted.split]
     if suspect:
         complaints.append(
             "these read as a fret the piece barely uses, while their legato reading "
-            "uses frets it plays constantly — check one bar of each by eye: " + suspect
+            "uses frets it plays constantly, and nothing settled it — check one bar "
+            "of each by eye: " + ", ".join(f"{t} x{emitted.contested[t]}" for t in suspect)
         )
     return lines, complaints
-
-
-def _suspect_frets(contested: dict[str, int], frets: collections.Counter[int]) -> str:
-    """
-    Contested digits where the joined reading looks worse than the split one.
-
-    Nothing outside the piece can settle `24`: fret 24 is playable and so is a
-    hammer-on from 2 to 4. The piece can. A tab whose notes live between frets 2
-    and 12 does not visit fret 24 five times, and its 2s and 4s number in the
-    hundreds — so the joined reading being rarer than either half of the split
-    one is the tell. That is a comparison against the reader's own output, which
-    is the only ground available here, and it is a reason to look rather than a
-    reason to act: it flags four patterns on the reference clip, and every one of
-    them is a legato pair printed without an arc.
-    """
-    out = []
-    for text, seen in sorted(contested.items(), key=lambda kv: -kv[1]):
-        readings = pipeline._readings_of(text)
-        joined = min(readings, key=len)
-        if len(joined) != 1:
-            continue  # already split, so nothing was claimed that could be wrong
-        split = min((r for r in readings if len(r) > 1), key=len, default=None)
-        if split is None:
-            continue
-        if frets[int(text)] < min(frets[int(fret)] for fret in split):
-            out.append(f"{text} x{seen}")
-    return ", ".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -288,7 +267,25 @@ def main(argv: list[str] | None = None) -> int:
     # through the whole time the reader was dropping every hammer-on it found.
     labels = {str(index): name for index, name in truth.items()}
     labels.update({str(o.index): o.label for o in outcomes if o.label is not None})
-    lines, complaints = _census(pipeline.emit(readings, shapes, labels))
+    emitted = pipeline.emit(readings, shapes, labels)
+
+    patterns = pipeline.suspect_patterns(emitted)
+    if patterns:
+        run_jobs = namer_mod.build_run_jobs(readings, shapes, labels, patterns, namer.exemplars)
+        print(f"\nasking about {len(run_jobs)} contested digit patterns")
+        verdicts = namer.read_runs(run_jobs)
+        for verdict in verdicts:
+            shows = next((a.shows for a in verdict.answers if a.shows), "")
+            mark = "split" if verdict.legato else "left"
+            print(
+                f"  {mark:<5} {verdict.text:<7} x{emitted.contested[verdict.text]:<4} "
+                f"({verdict.reason}) {shows[:60]}"
+            )
+        legato = {verdict.text for verdict in verdicts if verdict.legato}
+        if legato:
+            emitted = pipeline.emit(readings, shapes, labels, legato=legato)
+
+    lines, complaints = _census(emitted)
     print("\nwhat came out:")
     print("\n".join(lines))
     for complaint in complaints:

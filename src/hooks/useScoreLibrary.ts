@@ -267,6 +267,16 @@ export function useScoreLibrary() {
             'Naming those shapes on the next import brings them back.',
         )
       }
+      // The one place reading a video changed a note rather than named a shape:
+      // `24` printed tight is fret 24 and equally a hammer-on from 2 to 4, and
+      // nothing in the print says which. Where the model settled it, say so.
+      if (job.splitRunCount) {
+        warnings.push(
+          `${job.splitRunCount} ${job.splitRunCount === 1 ? 'number was' : 'numbers were'} read as ` +
+            'a hammer-on or pull-off rather than the fret they also spell. Worth checking those ' +
+            'bars: printed tight, the two readings look identical.',
+        )
+      }
       if (job.autoNamedCount) {
         warnings.push(
           'The printed shapes in this font were read automatically. Worth checking a bar ' +
@@ -388,6 +398,7 @@ export function useScoreLibrary() {
             pages: null,
             unreadCount: null,
       silentTechniqueCount: null,
+            splitRunCount: null,
           })
           return await follow(id)
         } catch (cause) {

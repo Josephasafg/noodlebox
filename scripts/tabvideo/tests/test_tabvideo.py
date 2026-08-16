@@ -691,6 +691,58 @@ def test_digits_with_two_equally_short_readings_are_reported_unread() -> None:
     assert emitter.unread == 1
 
 
+def test_a_contested_fret_reads_as_a_legato_pair_when_told_to() -> None:
+    """
+    `24` is fret 24 and equally a hammer-on from 2 to 4; only a caller can say.
+
+    Left alone it stays the fret, which is the reading that is right far more
+    often. Told otherwise, the same run becomes the pair, and the direction still
+    comes from the frets rather than from whoever said so.
+    """
+    assert pipeline.fret_sequence("24") == ["24"]
+    assert pipeline.fret_sequence("24", split=True) == ["2", "4"]
+    assert pipeline.fret_sequence("7", split=True) is None, "one digit is one fret"
+
+    run = _run_of(["2", "4"])
+    emitter = pipeline._StaffTexts(_tab_staff(), 0.0)
+    emitter.add_run(run, "24", split=True)
+    assert [token.str for token in emitter.resolve()] == ["2", "4", "h"]
+
+
+def _played(frets: list[str], contested: dict[str, int]) -> pipeline.Emitted:
+    """A finished reading of a piece that played these frets."""
+    texts = [
+        primitives.Text(str=fret, x=float(i), y=0.0, fontSize=10.0, width=6.0)
+        for i, fret in enumerate(frets)
+    ]
+    page = primitives.PagePrimitives(
+        pageIndex=0, width=600.0, height=400.0, segments=[], texts=texts
+    )
+    return pipeline.Emitted(pages=[page], unspelled=0, silent=0, contested=contested)
+
+
+def test_only_the_frets_a_piece_argues_against_are_put_up_for_question() -> None:
+    """
+    Which contested runs are worth a second opinion, and which must be left alone.
+
+    Nothing in the ink separates fret 24 from a hammer-on from 2 to 4. The piece
+    does: one that plays 2 and 4 constantly and reaches fret 24 once is telling
+    you which reading is the odd one. A `12` printed as often as everything else
+    is not — it occurs 94 times on the reference clip, and questioning it would
+    put 94 notes at risk to gain nothing.
+    """
+    played = ["2"] * 40 + ["4"] * 40 + ["12"] * 40 + ["24"]
+
+    suspect = pipeline.suspect_patterns(_played(played, {"24": 1, "12": 40}))
+
+    assert suspect == ["24"]
+
+
+def test_a_pattern_with_no_second_reading_is_never_questioned() -> None:
+    """`7` is one fret and nothing else, so there is nothing to ask about."""
+    assert pipeline.suspect_patterns(_played(["7"], {"7": 1})) == []
+
+
 # --- technique marks -------------------------------------------------------
 #
 # The video font fuses techniques into the tokens themselves — a hammer-on is a

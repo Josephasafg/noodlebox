@@ -32,7 +32,9 @@ class Rejected(Exception):
 class StubClient:
     """An OpenAI-shaped client that replays scripted answers."""
 
-    def __init__(self, answers: list[object], fails: int = 0, error: Exception | None = None) -> None:
+    def __init__(
+        self, answers: list[object], fails: int = 0, error: Exception | None = None
+    ) -> None:
         self.answers = list(answers)
         self.fails = fails
         self.error = error or RuntimeError("connection refused")
@@ -296,3 +298,100 @@ def test_a_configured_endpoint_is_reported_with_its_model() -> None:
             )
             is None
         )
+
+
+# --- contested runs --------------------------------------------------------
+#
+# `24` is fret 24, and it is also a hammer-on from 2 to 4. Nothing in the ink
+# decides that, so a model is asked — but only about patterns the piece's own
+# fret histogram already argues against, and only ever to overturn the fret
+# reading, never to arrive at one. Everything short of unanimous certainty
+# leaves the note exactly as it was read.
+
+
+def _run_job(bars: int = 3) -> namer_mod.RunJob:
+    return namer_mod.RunJob(
+        text="24", split=["2", "4"], count=5, bars=[b"png" for _ in range(bars)]
+    )
+
+
+def _reads(answer: str, certain: bool = True) -> dict:
+    return {"shows": "a bar of tab", "reads": answer, "certain": certain}
+
+
+def test_looks_that_all_say_two_notes_split_the_run() -> None:
+    namer = _namer([_reads("two notes")] * 3)
+
+    outcome = namer.read_runs([_run_job()])[0]
+
+    assert outcome.legato
+    assert outcome.reason == "agreed"
+
+
+def test_one_look_saying_one_number_leaves_the_fret_alone() -> None:
+    namer = _namer([_reads("two notes"), _reads("two notes"), _reads("one number")])
+
+    outcome = namer.read_runs([_run_job()])[0]
+
+    assert not outcome.legato
+    assert outcome.reason == "conflict"
+
+
+def test_an_unsure_look_leaves_the_fret_alone() -> None:
+    """
+    Unlike naming a shape, one abstention is enough to stop this.
+
+    Naming starts from nothing and needs agreement to produce an answer. Here
+    there already is an answer, right 270 times in 275 on the reference clip, so
+    the bar for changing it is every look being sure — and the safe outcome of
+    hesitation is the reading that was already there.
+    """
+    namer = _namer([_reads("two notes"), _reads("two notes", certain=False)])
+
+    outcome = namer.read_runs([namer_mod.RunJob("24", ["2", "4"], 5, [b"png", b"png"])])[0]
+
+    assert not outcome.legato
+    assert outcome.reason == "unsure"
+
+
+def test_agreeing_that_it_is_one_number_leaves_the_fret_alone() -> None:
+    namer = _namer([_reads("one number")] * 3)
+
+    outcome = namer.read_runs([_run_job()])[0]
+
+    assert not outcome.legato
+    assert outcome.reason == "one number"
+
+
+def test_a_dead_endpoint_leaves_every_contested_fret_alone() -> None:
+    namer = _namer([], fails=9)
+
+    outcome = namer.read_runs([_run_job()])[0]
+
+    assert not outcome.legato
+
+
+def test_an_answer_outside_the_two_readings_leaves_the_fret_alone() -> None:
+    namer = _namer([_reads("a hammer-on")] * 3)
+
+    assert not namer.read_runs([_run_job()])[0].legato
+
+
+def test_a_run_with_no_render_is_never_split() -> None:
+    """No picture is no evidence, and no evidence must not change a note."""
+    namer = _namer([_reads("two notes")] * 3)
+
+    outcome = namer.read_runs([namer_mod.RunJob("24", ["2", "4"], 5, [])])[0]
+
+    assert not outcome.legato
+
+
+def test_the_question_names_both_readings() -> None:
+    """The model is choosing between two stated frets, not reading digits."""
+    namer = _namer([_reads("two notes")])
+
+    namer.read_runs([namer_mod.RunJob("24", ["2", "4"], 5, [b"png"])])
+
+    asked = namer.client.calls[0]["messages"][1]["content"][0]["text"]
+    assert "fret 24" in asked
+    assert "2 then 4" in asked
