@@ -168,12 +168,12 @@ def check_scroll(path: str) -> tuple[int, int]:
     Raises `ScrollingVideo` for a scrolling one, so a caller never has to
     remember to test the drift itself.
     """
-    capture = cv2.VideoCapture(path)
-    ok, first = capture.read()
-    capture.release()
-    if not ok:
-        raise UnreadableVideo(f"could not read any frames from {path}")
-    panel = frames.find_panel(first)
+    try:
+        panel = frames.locate_panel(path)
+    except frames.VideoUnreadable as problem:
+        # Reported as this module's own failure so a caller showing it to someone
+        # does not have to dress up an exception from two layers down.
+        raise UnreadableVideo(str(problem)) from problem
     dx, dy = frames.measure_scroll(path, panel)
     if max(abs(dx), abs(dy)) > SCROLL_LIMIT_PX_PER_S:
         raise ScrollingVideo(dx, dy)

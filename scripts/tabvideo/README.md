@@ -464,10 +464,15 @@ it is 0.3% now. Almost all of it was invented by the two mechanisms above.
 ## How it works
 
 1. `frames.py` finds the notation panel by row statistics in HSV — engraved paper
-   is bright and grey, camera footage is not — then splits the timeline where the
-   panel changes wholesale and median-combines several frames of each held
-   system. The median is what erases a playback cursor: the highlight moves
-   between samples while the notation underneath does not.
+   is bright and grey, camera footage is not. The band is taken from frames spread
+   across the whole video rather than from the first one, which is as likely to be
+   a fade or a title card as it is to be notation, and the short breaks a dark
+   ruled line cuts into the paper mask are bridged, or the panel would come back
+   as the sliver above the top line of the staff. It then splits the timeline
+   where the panel changes wholesale and median-combines several frames of each
+   held system, skipping any interval whose panel holds no paper — an intro or a
+   cutaway is not a system. The median is what erases a playback cursor: the
+   highlight moves between samples while the notation underneath does not.
 2. `staff.py` finds the long horizontal rules and the verticals crossing them.
    Rules get a far more permissive threshold than notes, because engravers draw
    staff lines much lighter than the glyphs sitting on them.

@@ -89,6 +89,24 @@ def test_find_panel_locates_the_engraved_band() -> None:
     assert panel.bottom >= 199
 
 
+def test_find_panel_spans_a_staff_ruled_dark() -> None:
+    """
+    A full-width dark rule breaks the paper mask, and the panel must survive it.
+
+    The row a dark line occupies is not bright, so the longest run of paper rows
+    is whatever lies between two lines. Left unbridged that is a sliver above the
+    top line of the staff, and every staff on the page is cropped away below it.
+    """
+    frame = np.zeros((400, 300, 3), dtype=np.uint8)
+    frame[:200] = (20, 200, 180)  # saturated camera footage
+    frame[200:] = (250, 250, 250)  # paper
+    for line in range(6):
+        frame[240 + line * 20] = (140, 140, 140)  # a dark tab rule, full width
+    panel = frames.find_panel(frame)
+    assert panel.top <= 205
+    assert panel.bottom >= 399, "the panel must reach past the last rule"
+
+
 def test_pale_rules_reach_the_marks_mask_but_not_the_ink_mask() -> None:
     page = render_system([(0, 100, "7")])
     marks = staff_mod.marks(page)

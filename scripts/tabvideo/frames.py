@@ -25,6 +25,20 @@ import numpy as np
 PAPER_MAX_SATURATION = 30.0
 PAPER_MIN_VALUE = 180.0
 
+# Rules drawn dark enough cross the whole panel, so they pull whole rows below
+# the brightness test and the paper mask arrives in stripes. Measured on a
+# dark-ruled 1080p video: its six tab lines and the divider under the staff break
+# the mask at one to four rows each, while the step from camera footage to paper
+# is hundreds of rows. Held as a fraction of frame height so a 720p or 4K frame
+# bridges the same physical line.
+PAPER_GAP_FRACTION = 0.006
+
+# Frames looked at when locating the panel. A video may fade in from black, open
+# on a title card, or cut away to the player, so no single frame can be trusted
+# to hold the notation — but the band does not move, so a handful of samples
+# spread across the video agree on it.
+PANEL_SAMPLES = 9
+
 # Mean absolute grey difference, on a downsampled panel, that separates "the
 # system changed" from compression noise. Measured spread on real video is
 # ~0.01 between held frames against >15 across a swap, so this sits far from both.
@@ -41,6 +55,13 @@ SETTLE_TRIM = 0.25
 # Frames combined per system. An odd count gives the median a true middle
 # sample, and a handful is enough to erase a playback cursor.
 COMPOSITE_SAMPLES = 5
+
+# Fraction of a composited panel that must be paper for it to be engraving at
+# all. An opening fade, a dark cutaway or a title card occupies the panel's rows
+# without its brightness, and would otherwise be emitted as a system with nothing
+# on it. Measured on a video that fades in from black: 0.00 across the fade
+# against 0.93 on every one of its engraved systems.
+PANEL_MIN_PAPER = 0.5
 
 
 @dataclass(frozen=True)
@@ -77,15 +98,34 @@ def _open(path: str) -> cv2.VideoCapture:
     return cap
 
 
+def _bridge_rules(paper: np.ndarray, max_gap: int) -> np.ndarray:
+    """
+    Close the short breaks that dark ruled lines cut into the paper mask.
+
+    Without this the longest run of paper rows is whatever lies between two
+    rules, so a dark-ruled engraver yields a sliver of the panel — the band above
+    its top staff line — and every staff is cropped away below it.
+    """
+    rows = np.flatnonzero(paper)
+    joined = paper.copy()
+    for above, below in zip(rows[:-1], rows[1:]):
+        if 1 < below - above <= max_gap + 1:
+            joined[above + 1 : below] = True
+    return joined
+
+
 def find_panel(frame: np.ndarray) -> Panel:
     """
-    Locate the notation panel in a frame.
+    Locate the notation panel in one frame.
 
     Tab videos usually pair a camera with the score, so the score occupies a
     band rather than the whole frame. The band is found by row statistics in HSV
     instead of by edge detection: a row of engraved paper is bright and grey
     almost everywhere, which stays true whether the notation is dense or empty,
     and does not depend on where the split happens to fall.
+
+    Prefer `locate_panel`, which does not depend on any one frame holding the
+    notation.
     """
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     saturation = hsv[:, :, 1].mean(axis=1)
@@ -94,10 +134,55 @@ def find_panel(frame: np.ndarray) -> Panel:
     if not paper.any():
         raise VideoUnreadable("no engraved panel found; is this a tab video?")
 
+    paper = _bridge_rules(paper, max(1, round(frame.shape[0] * PAPER_GAP_FRACTION)))
     rows = np.flatnonzero(paper)
     runs = np.split(rows, np.flatnonzero(np.diff(rows) > 1) + 1)
     longest = max(runs, key=len)
     return Panel(top=int(longest[0]), bottom=int(longest[-1]) + 1)
+
+
+def locate_panel(path: str, samples: int = PANEL_SAMPLES) -> Panel:
+    """
+    Find the notation panel from frames spread across the whole video.
+
+    Reading it off the first frame alone made a video that fades in from black
+    report itself as not a tab video, which is the one thing this error must not
+    say when it is wrong. Sampling also means a title card, a bright intro or a
+    cutaway costs nothing: the panel is the median of the frames that found
+    paper, so no single odd frame can move it, and only a video where none of
+    them held notation is refused.
+    """
+    cap = _open(path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    indices = (
+        np.linspace(0, total - 1, min(samples, total)).astype(int)
+        if total > 0
+        else np.array([0])
+    )
+    found: list[Panel] = []
+    read_any = False
+    try:
+        for index in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            read_any = True
+            try:
+                found.append(find_panel(frame))
+            except VideoUnreadable:
+                continue
+    finally:
+        cap.release()
+
+    if not read_any:
+        raise VideoUnreadable("no frames could be read")
+    if not found:
+        raise VideoUnreadable("no engraved panel found; is this a tab video?")
+    return Panel(
+        top=int(np.median([p.top for p in found])),
+        bottom=int(np.median([p.bottom for p in found])),
+    )
 
 
 def _signature(gray_panel: np.ndarray) -> np.ndarray:
@@ -205,6 +290,17 @@ def _looks_blank(image: np.ndarray) -> bool:
     return float((image < 128).mean()) < 0.002
 
 
+def _holds_paper(image: np.ndarray) -> bool:
+    """
+    True when the panel is engraved paper rather than something else entirely.
+
+    `_looks_blank` catches a panel with no ink on it; this catches the opposite
+    end, where the panel is dark all over because the video is fading in or has
+    cut away. Both are intervals with no notation in them.
+    """
+    return float((image > PAPER_MIN_VALUE).mean()) >= PANEL_MIN_PAPER
+
+
 def read_pages(path: str, min_hold_s: float = 1.0) -> Iterator[Page]:
     """
     Yield one composited image per engraved system, in playing order.
@@ -213,14 +309,7 @@ def read_pages(path: str, min_hold_s: float = 1.0) -> Iterator[Page]:
     frames mosaicked before they can be read, which `measure_scroll` detects and
     the caller is told about rather than silently mishandled.
     """
-    cap = _open(path)
-    ok, first = cap.read()
-    if not ok:
-        cap.release()
-        raise VideoUnreadable("no frames could be read")
-    panel = find_panel(first)
-    cap.release()
-
+    panel = locate_panel(path)
     times, signatures, fps = _scan(path, panel)
     intervals = [iv for iv in _held_intervals(times, signatures) if iv[1] - iv[0] >= min_hold_s]
 
@@ -230,7 +319,7 @@ def read_pages(path: str, min_hold_s: float = 1.0) -> Iterator[Page]:
     try:
         for start_s, end_s in intervals:
             image = _composite(cap, panel, fps, start_s, end_s)
-            if image is None or _looks_blank(image):
+            if image is None or _looks_blank(image) or not _holds_paper(image):
                 continue
             # A repeated section shows the same system twice; only drop it when
             # it repeats back to back, which is re-detection of one swap rather

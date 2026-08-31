@@ -70,6 +70,90 @@ def test_the_camera_strip_is_left_out_of_the_panel(video: Path) -> None:
     assert panel.top >= fixture.CAMERA_HEIGHT, "the camera strip is not engraved paper"
 
 
+# --- finding the panel whatever the video opens on -------------------------
+
+
+def holds_the_tab_staff(panel: frames.Panel) -> bool:
+    """
+    Whether the whole tab staff is inside the panel, which is what must be read.
+
+    The bar is the staff rather than the panel's full height because the fixture
+    prints beams across the width, and a row of beam is not paper — so even a
+    correct panel starts a little below the top of the page.
+    """
+    top = fixture.CAMERA_HEIGHT + fixture.TAB_TOP
+    return panel.top <= top and panel.bottom >= top + 5 * fixture.TAB_SPACING
+
+
+@pytest.fixture
+def faded_in(tmp_path: Path) -> Path:
+    """A video that opens on four seconds of black, as a real one does."""
+    return fixture.write_video(
+        tmp_path / "faded.mp4", lead_in=fixture.black_frame(), lead_in_s=4.0
+    )
+
+
+def test_a_video_that_fades_in_from_black_is_still_read(faded_in: Path) -> None:
+    """
+    The panel must not be looked for in the first frame alone.
+
+    Taking it from frame zero meant a video that fades in reported "no engraved
+    panel found; is this a tab video?" — which is the one thing that error must
+    not say when the video plainly is one.
+    """
+    panel = frames.locate_panel(str(faded_in))
+    assert panel.top >= fixture.CAMERA_HEIGHT, "the camera strip is not engraved paper"
+    assert holds_the_tab_staff(panel)
+
+
+def test_the_opening_fade_is_not_emitted_as_a_system(faded_in: Path) -> None:
+    """A dark interval holds no notation, so it is not one of the systems."""
+    pages = list(frames.read_pages(str(faded_in)))
+    assert len(pages) == 3, "three systems were held; the fade is not a fourth"
+    assert all(float((p.image > frames.PAPER_MIN_VALUE).mean()) > 0.5 for p in pages)
+
+
+def test_a_bright_title_card_does_not_move_the_panel(tmp_path: Path) -> None:
+    """
+    The band is the median of the frames that found paper, not the first of them.
+
+    A card that fills the frame is paper-bright everywhere, so a finder that took
+    the first frame with paper in it would call the whole frame the panel and
+    read the camera strip as notation.
+    """
+    video = fixture.write_video(
+        tmp_path / "card.mp4", lead_in=fixture.title_card(), lead_in_s=2.0
+    )
+    panel = frames.locate_panel(str(video))
+    assert panel.top >= fixture.CAMERA_HEIGHT
+
+
+def test_a_video_with_no_paper_in_it_is_still_refused(tmp_path: Path) -> None:
+    """The error still has to fire for a video that genuinely has no notation."""
+    video = fixture.write_video(
+        tmp_path / "dark.mp4", pages=[], lead_in=fixture.black_frame(), lead_in_s=2.0
+    )
+    with pytest.raises(pipeline.UnreadableVideo, match="no engraved panel found"):
+        pipeline.check_scroll(str(video))
+
+
+def test_dark_staff_rules_do_not_cut_the_panel_down(tmp_path: Path) -> None:
+    """
+    A dark-ruled engraver must still yield the whole panel.
+
+    Each dark line drags its row below the brightness test, so the longest run of
+    paper rows is the gap between two of them: on the video this was measured
+    from, 111 rows of a 337-row panel, holding no staff at all.
+    """
+    video = fixture.write_video(
+        tmp_path / "dark-rules.mp4",
+        pages=fixture.systems(rule_grey=fixture.DARK_RULE_GREY),
+    )
+    panel = frames.locate_panel(str(video))
+    assert panel.top >= fixture.CAMERA_HEIGHT
+    assert holds_the_tab_staff(panel), "the rules must not crop the staff away"
+
+
 def test_the_playback_cursor_is_composited_away(video: Path) -> None:
     """
     The median of several frames must leave no trace of the moving highlight.

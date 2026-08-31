@@ -19,6 +19,12 @@ PAPER = 253
 RULE_GREY = 225
 INK = 20
 
+# Some engravers rule the staff dark rather than pale. That is not a cosmetic
+# difference: a dark full-width line drags its whole row below the brightness
+# test the panel finder uses, so the paper mask comes back in stripes. Measured
+# on a real dark-ruled video, those lines sit around 140.
+DARK_RULE_GREY = 140
+
 WIDTH = 1600
 # The panel is cropped closely around the two staves, as a real one is. That is
 # not only cosmetic: frames are compared through a 240x40 downsample, so a loose
@@ -44,7 +50,11 @@ CURSOR_GREY = 236
 CURSOR_WIDTH = 3
 
 
-def render_system(notes: list[tuple[int, int, str]], barlines: tuple[int, ...]) -> np.ndarray:
+def render_system(
+    notes: list[tuple[int, int, str]],
+    barlines: tuple[int, ...],
+    rule_grey: int = RULE_GREY,
+) -> np.ndarray:
     """
     Draw one engraved system: notation staff, tab staff, fret numbers.
 
@@ -55,9 +65,9 @@ def render_system(notes: list[tuple[int, int, str]], barlines: tuple[int, ...]) 
     """
     page = np.full((PANEL_HEIGHT, WIDTH), PAPER, dtype=np.uint8)
     for i in range(5):
-        page[NOTATION_TOP + i * NOTATION_SPACING, 20 : WIDTH - 20] = RULE_GREY
+        page[NOTATION_TOP + i * NOTATION_SPACING, 20 : WIDTH - 20] = rule_grey
     for i in range(6):
-        page[TAB_TOP + i * TAB_SPACING, 20 : WIDTH - 20] = RULE_GREY
+        page[TAB_TOP + i * TAB_SPACING, 20 : WIDTH - 20] = rule_grey
     for x in barlines:
         page[TAB_TOP : TAB_TOP + 5 * TAB_SPACING + 1, x] = INK
         page[NOTATION_TOP : NOTATION_TOP + 4 * NOTATION_SPACING + 1, x] = INK
@@ -126,7 +136,7 @@ NOTES_PER_SYSTEM = 52
 FRETS = ("5", "7", "9", "12", "0", "4")
 
 
-def systems(count: int = 3) -> list[np.ndarray]:
+def systems(count: int = 3, rule_grey: int = RULE_GREY) -> list[np.ndarray]:
     """
     Systems whose notation genuinely differs, as consecutive ones do.
 
@@ -143,7 +153,7 @@ def systems(count: int = 3) -> list[np.ndarray]:
             fret = FRETS[(i * (system + 1)) % len(FRETS)]
             notes.append((string_index, x, fret))
         barlines = (20, 400 + system * 30, 800 + system * 30, 1200 + system * 30, WIDTH - 20)
-        pages.append(render_system(notes, barlines))
+        pages.append(render_system(notes, barlines, rule_grey))
     return pages
 
 
@@ -161,8 +171,30 @@ def _frame(page: np.ndarray, cursor_x: int) -> np.ndarray:
     return np.vstack([camera, frame])
 
 
-def write_video(path: Path, pages: list[np.ndarray] | None = None, hold_s: float = HOLD_S) -> Path:
-    """Write the fixture video, each system held then swapped for the next."""
+def black_frame() -> np.ndarray:
+    """The frame a video fades in from: no paper anywhere in it."""
+    return np.zeros((PANEL_HEIGHT + CAMERA_HEIGHT, WIDTH, 3), dtype=np.uint8)
+
+
+def title_card() -> np.ndarray:
+    """A card filling the frame: paper-bright everywhere, engraved nowhere."""
+    return np.full((PANEL_HEIGHT + CAMERA_HEIGHT, WIDTH, 3), PAPER, dtype=np.uint8)
+
+
+def write_video(
+    path: Path,
+    pages: list[np.ndarray] | None = None,
+    hold_s: float = HOLD_S,
+    lead_in: np.ndarray | None = None,
+    lead_in_s: float = 0.0,
+) -> Path:
+    """
+    Write the fixture video, each system held then swapped for the next.
+
+    `lead_in` is a frame shown for `lead_in_s` before the notation starts, which
+    is how a real video opens: a fade from black, or a title card. Nothing about
+    it is engraved, so it stands for the frames the panel cannot be found in.
+    """
     pages = pages if pages is not None else systems()
     writer = cv2.VideoWriter(
         str(path),
@@ -172,6 +204,9 @@ def write_video(path: Path, pages: list[np.ndarray] | None = None, hold_s: float
     )
     if not writer.isOpened():
         raise RuntimeError("OpenCV could not open an mp4 writer")
+    if lead_in is not None:
+        for _ in range(int(round(lead_in_s * FPS))):
+            writer.write(lead_in)
     per_page = int(round(hold_s * FPS))
     for page in pages:
         for index in range(per_page):
