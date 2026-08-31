@@ -6,6 +6,8 @@ import { LickPanel } from './components/LickPanel'
 import { SongPanel } from './components/SongPanel'
 import { ScaleMenu } from './components/ScaleMenu'
 import { ScorePanel } from './components/ScorePanel'
+import { ChordSheetPanel } from './components/ChordSheetPanel'
+import { sheetHasWords } from './chords/types'
 import { LibraryBrowser } from './components/LibraryBrowser'
 import { ShapeNamer } from './components/ShapeNamer'
 import { Tuner } from './components/Tuner'
@@ -490,6 +492,13 @@ export function App() {
             onBeatsPerBarChange={(beats) => void library.setBeatsPerBar(beats)}
             onClose={library.close}
           />
+        </div>
+      )}
+
+      {/* An instrumental has no words, and its tab is engraved above instead. */}
+      {library.sheet && sheetHasWords(library.sheet) && (
+        <div className="app__lick">
+          <ChordSheetPanel sheet={library.sheet} onClose={library.close} />
         </div>
       )}
 

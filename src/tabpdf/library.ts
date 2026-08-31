@@ -1,3 +1,4 @@
+import { sheetStats, type AsciiSource, type ChordSheet } from '../chords/types'
 import type { ParsedScore, TabPagePrimitives } from './types'
 
 /**
@@ -22,12 +23,13 @@ const DATA_STORE = 'data'
  * Where a tab came from, shown in the list so two imports of one song can be
  * told apart.
  *
- * `pdf` is a PDF that was picked, `url` came from a link, and `tab` is the
- * primitives file the video reader writes. The distinction is worth surfacing
- * because it says how much to trust what is on screen: a PDF was engraved,
- * whereas a video was recognised and may have gaps.
+ * `pdf` is a PDF that was picked, `url` came from a link, `tab` is the
+ * primitives file the video reader writes, and `chords` is a chord sheet read
+ * from a song page. The distinction is worth surfacing because it says how
+ * much to trust what is on screen: a PDF was engraved, whereas a video was
+ * recognised and may have gaps.
  */
-export type TabSource = 'pdf' | 'url' | 'tab' | 'video'
+export type TabSource = 'pdf' | 'url' | 'tab' | 'video' | 'chords'
 
 /** What the library list needs to show a row. */
 export interface LibraryEntry {
@@ -43,6 +45,10 @@ export interface LibraryEntry {
   source: TabSource
   /** 1 unless another import already had this title and artist. */
   version: number
+  /** Lyric lines, for a song imported from a chord site. */
+  lyricLines?: number
+  /** Chord names printed over the words, for a song from a chord site. */
+  chordCount?: number
 }
 
 /**
@@ -56,11 +62,19 @@ export type StoredSource = { pdf: Blob } | { primitives: TabPagePrimitives[] }
 
 export interface StoredData {
   id: string
-  score: ParsedScore
+  /** Present whenever there is tablature, however it was read. */
+  score?: ParsedScore
+  /** Present when the song came from a chord site and has words. */
+  sheet?: ChordSheet
   /** Present when the tab came from a PDF. */
   pdf?: Blob
   /** Present when the tab came from a primitives file. */
   primitives?: TabPagePrimitives[]
+  /**
+   * The plain-text staves a chord-site score was built from, kept so it can be
+   * read again at a different bar length without fetching the page twice.
+   */
+  blocks?: AsciiSource[]
 }
 
 export class LibraryUnavailableError extends Error {}
@@ -99,11 +113,18 @@ async function withStores<T>(
   const db = await openDb()
   try {
     const tx = db.transaction([META_STORE, DATA_STORE], mode)
-    const result = await run(tx.objectStore(META_STORE), tx.objectStore(DATA_STORE))
-    await new Promise<void>((resolve, reject) => {
+    // Listen before anything is awaited. A transaction commits once its last
+    // request lands, and a `complete` handler attached after that event has
+    // fired would never run — leaving this waiting forever on a store that has
+    // already finished. Task ordering makes that unlikely rather than
+    // impossible, and the cost of being wrong is a write that never returns, so
+    // the handler goes on while the transaction is certain to still be open.
+    const settled = new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve()
       tx.onabort = tx.onerror = () => reject(tx.error ?? new Error('Storage transaction failed'))
     })
+    const result = await run(tx.objectStore(META_STORE), tx.objectStore(DATA_STORE))
+    await settled
     return result
   } finally {
     db.close()
@@ -169,6 +190,61 @@ export async function saveTab(
   })
 }
 
+/** What a song from a chord site will be called, mirroring `titleFor`. */
+export function sheetTitleFor(sheet: ChordSheet, fileName: string): string {
+  return sheet.title ?? fileName.replace(/\.html?$/i, '')
+}
+
+/**
+ * The list row for a song imported from a chord site.
+ *
+ * Such a song can have tablature, words, or both, so the row carries both
+ * sizes: bars and notes come from whatever tab was engraved, and the lyric and
+ * chord counts from the words above it.
+ */
+export function sheetEntryFor(
+  id: string,
+  sheet: ChordSheet,
+  score: ParsedScore | null,
+  fileName: string,
+  addedAt: number,
+  version = 1,
+): LibraryEntry {
+  const stats = sheetStats(sheet)
+  return {
+    id,
+    title: sheetTitleFor(sheet, fileName),
+    artist: sheet.artist,
+    bars: score?.measures.length ?? 0,
+    noteCount: score?.notes.length ?? 0,
+    pageCount: 1,
+    fileName,
+    addedAt,
+    source: 'chords',
+    version,
+    lyricLines: stats.lines,
+    chordCount: stats.chords,
+  }
+}
+
+/** Store a song read from a chord site: its words, its tab, and the tab's source. */
+export async function saveSheet(
+  entry: LibraryEntry,
+  sheet: ChordSheet,
+  score: ParsedScore | null,
+  blocks: AsciiSource[],
+): Promise<void> {
+  await withStores('readwrite', (meta, data) => {
+    meta.put(entry)
+    data.put({
+      id: entry.id,
+      sheet,
+      ...(score ? { score } : {}),
+      ...(blocks.length > 0 ? { blocks } : {}),
+    } satisfies StoredData)
+  })
+}
+
 /** Replace a stored score in place, keeping its list entry current. */
 export async function updateTab(entry: LibraryEntry, score: ParsedScore): Promise<void> {
   await withStores('readwrite', async (meta, data) => {
@@ -196,7 +272,10 @@ export async function renameTab(id: string, title: string): Promise<void> {
     ])
     if (!entry || !stored) return
     meta.put({ ...entry, title })
-    data.put({ ...stored, score: { ...stored.score, title } })
+    const renamed: StoredData = { ...stored }
+    if (renamed.score) renamed.score = { ...renamed.score, title }
+    if (renamed.sheet) renamed.sheet = { ...renamed.sheet, title }
+    data.put(renamed)
   })
 }
 

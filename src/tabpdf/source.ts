@@ -32,7 +32,10 @@ const VIDEO_HOSTS = [
 ]
 const VIDEO_EXTENSIONS = /\.(mp4|mkv|webm|mov|avi|m4v|flv)$/i
 
-export type UrlKind = 'pdf' | 'primitives' | 'video' | 'unknown'
+/** Sites whose song pages are read as chords and plain-text tablature. */
+const CHORD_HOSTS = ['tab4u.com', 'ultimate-guitar.com']
+
+export type UrlKind = 'pdf' | 'primitives' | 'video' | 'chords' | 'unknown'
 
 /** How to get the service that reads videos running, when it is not. */
 export const START_SERVER_COMMAND = 'npm run dev'
@@ -52,6 +55,8 @@ export function classifyUrl(raw: string): UrlKind {
     return 'unknown'
   }
   const host = url.hostname.replace(/^www\./, '').toLowerCase()
+  // Song pages sit on a subdomain as often as not — tabs.ultimate-guitar.com.
+  if (CHORD_HOSTS.some((site) => host === site || host.endsWith(`.${site}`))) return 'chords'
   if (VIDEO_HOSTS.includes(host) || VIDEO_EXTENSIONS.test(url.pathname)) return 'video'
   if (/\.pdf$/i.test(url.pathname)) return 'pdf'
   if (/\.json$/i.test(url.pathname)) return 'primitives'

@@ -53,6 +53,17 @@ describe('classifying a link', () => {
     expect(classifyUrl('https://example.com/out/primitives.json')).toBe('primitives')
   })
 
+  it('recognises a chord site song page by its host', () => {
+    expect(classifyUrl('https://www.tab4u.com/tabs/songs/66169_song.html')).toBe('chords')
+    expect(classifyUrl('https://tab4u.com/tabs/songs/66169_song.html')).toBe('chords')
+  })
+
+  it('recognises a song page on a subdomain of a chord site', () => {
+    // Ultimate Guitar serves its song pages from `tabs.`, not the bare domain.
+    expect(classifyUrl('https://tabs.ultimate-guitar.com/tab/a/b-tabs-1')).toBe('chords')
+    expect(classifyUrl('https://www.ultimate-guitar.com/tab/a/b-tabs-1')).toBe('chords')
+  })
+
   it('leaves anything else to be judged by its content type', () => {
     expect(classifyUrl('https://example.com/download?id=9')).toBe('unknown')
     expect(classifyUrl('not a link at all')).toBe('unknown')

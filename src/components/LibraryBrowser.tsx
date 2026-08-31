@@ -47,10 +47,21 @@ const SOURCE_LABEL: Record<LibraryEntry['source'], string> = {
   url: 'url',
   tab: 'tab',
   video: 'video',
+  chords: 'chords',
 }
 
 function describe(entry: LibraryEntry): string {
-  const parts = [`${entry.bars} bars`, `${entry.pageCount} ${entry.pageCount === 1 ? 'page' : 'pages'}`]
+  const parts: string[] = []
+  if (entry.source === 'chords') {
+    // A song from a chord site can have words, tablature or both, so it is
+    // sized by whichever it turned out to have.
+    if (entry.lyricLines) parts.push(`${entry.lyricLines} lines`)
+    if (entry.chordCount) parts.push(`${entry.chordCount} chords`)
+    if (entry.bars) parts.push(`${entry.bars} bars`)
+  } else {
+    parts.push(`${entry.bars} bars`)
+    parts.push(`${entry.pageCount} ${entry.pageCount === 1 ? 'page' : 'pages'}`)
+  }
   // Only worth saying once there is more than one reading of the song.
   if (entry.version > 1) parts.push(`version ${entry.version}`)
   return parts.join(' · ')
@@ -250,7 +261,7 @@ export function LibraryBrowser({
                 inputMode="url"
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="…or paste a link to a video or a PDF"
+                placeholder="…or paste a link to a song, a video, or a PDF"
                 aria-label="Import a tab from a link"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}

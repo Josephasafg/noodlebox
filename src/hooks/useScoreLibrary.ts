@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { TabPdfError, importTabPdf, readTabPdf } from '../tabpdf/load'
 import { parseScore } from '../tabpdf/parse'
-import { classifyUrl, fetchSource, parsePrimitives } from '../tabpdf/source'
+import { classifyUrl, fetchSource, fileNameFor, parsePrimitives } from '../tabpdf/source'
 import {
   discardVideoJob,
   nameVideoShapes,
@@ -16,7 +16,10 @@ import {
   listTabs,
   readTab,
   renameTab,
+  saveSheet,
   saveTab,
+  sheetEntryFor,
+  sheetTitleFor,
   titleFor,
   updateTab,
   type LibraryEntry,
@@ -24,6 +27,9 @@ import {
   type TabSource,
 } from '../tabpdf/library'
 import { applyNoteChange, type NoteChange } from '../tabpdf/edit'
+import { importChordPage } from '../chords/import'
+import { scoreFromAscii } from '../chords/ascii'
+import { sheetHasWords, type AsciiSource, type ChordPage, type ChordSheet } from '../chords/types'
 import type { ParsedScore, TabPagePrimitives } from '../tabpdf/types'
 
 /** Which tab was open last, so a refresh reopens it. */
@@ -50,6 +56,12 @@ function lastOpenId(): string | null {
   }
 }
 
+function newId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `tab-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+}
+
 /**
  * The library of imported tabs, and whichever one is open.
  *
@@ -62,6 +74,8 @@ export function useScoreLibrary() {
   const [entries, setEntries] = useState<LibraryEntry[]>([])
   const [entry, setEntry] = useState<LibraryEntry | null>(null)
   const [score, setScore] = useState<ParsedScore | null>(null)
+  /** The open chord sheet; a sheet and a score are never open together. */
+  const [sheet, setSheet] = useState<ChordSheet | null>(null)
   const [status, setStatus] = useState<LibraryStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ page: number; total: number } | null>(null)
@@ -71,6 +85,8 @@ export function useScoreLibrary() {
   /** Whether a vision model is naming the shapes, so the library can say so. */
   const [videoNamesShapes, setVideoNamesShapes] = useState(false)
   const pagesRef = useRef<TabPagePrimitives[] | null>(null)
+  /** The plain-text staves behind the open song, when it came from a chord site. */
+  const blocksRef = useRef<AsciiSource[] | null>(null)
   /** The job being followed. Anything else polling is stale and must stop. */
   const followingRef = useRef<string | null>(null)
 
@@ -91,12 +107,14 @@ export function useScoreLibrary() {
           return null
         }
         pagesRef.current = null
+        blocksRef.current = stored.blocks ?? null
         setEntries(all)
         setEntry(all.find((e) => e.id === id) ?? null)
-        setScore(stored.score)
+        setScore(stored.score ?? null)
+        setSheet(stored.sheet ?? null)
         rememberLastOpen(id)
         setStatus('idle')
-        return stored.score
+        return stored.score ?? null
       } catch (cause) {
         fail(cause, 'That tab could not be opened.')
         return null
@@ -118,8 +136,10 @@ export function useScoreLibrary() {
         if (!match) return
         const stored = await readTab(match.id)
         if (cancelled || !stored) return
+        blocksRef.current = stored.blocks ?? null
         setEntry(match)
-        setScore(stored.score)
+        setScore(stored.score ?? null)
+        setSheet(stored.sheet ?? null)
       } catch {
         // An unavailable store just means the library starts out empty.
       }
@@ -166,11 +186,7 @@ export function useScoreLibrary() {
         (e) => e.fileName !== fileName && e.title === title && e.artist === next.artist,
       )
       const version = existing?.version ?? siblings.length + 1
-      const id =
-        existing?.id ??
-        (typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : `tab-${Date.now()}-${Math.floor(Math.random() * 1e6)}`)
+      const id = existing?.id ?? newId()
       const nextEntry = entryFor(
         id,
         next,
@@ -188,13 +204,61 @@ export function useScoreLibrary() {
         setError('This tab was read but could not be saved to the library.')
       }
       pagesRef.current = pages
+      blocksRef.current = null
       setEntry(nextEntry)
       setScore(next)
+      setSheet(null)
       setStatus('idle')
       return next
     },
     [],
   )
+
+  /**
+   * Take a song read from a chord site into the library, mirroring `adopt`.
+   *
+   * Such a page can carry words, tablature or both, so both halves are kept: the
+   * words as a sheet to read along with, and the tab engraved as a score that
+   * plays and edits like any other import.
+   */
+  const adoptChordPage = useCallback(async (page: ChordPage, fileName: string) => {
+    const { sheet: next, score: engraved } = page
+    if (!sheetHasWords(next) && !engraved) {
+      setError('No chords, lyrics or tablature could be found on that page.')
+      setStatus('error')
+      return null
+    }
+    const all = await listTabs().catch(() => [])
+    const existing = all.find((e) => e.fileName === fileName)
+    const title = sheetTitleFor(next, fileName)
+    const siblings = all.filter(
+      (e) => e.fileName !== fileName && e.title === title && e.artist === next.artist,
+    )
+    const version = existing?.version ?? siblings.length + 1
+    const id = existing?.id ?? newId()
+    const nextEntry = sheetEntryFor(
+      id,
+      next,
+      engraved,
+      fileName,
+      existing?.addedAt ?? Date.now(),
+      version,
+    )
+    try {
+      await saveSheet(nextEntry, next, engraved, page.blocks)
+      setEntries(await listTabs())
+      rememberLastOpen(id)
+    } catch {
+      setError('This song was read but could not be saved to the library.')
+    }
+    pagesRef.current = null
+    blocksRef.current = page.blocks
+    setEntry(nextEntry)
+    setSheet(next)
+    setScore(engraved)
+    setStatus('idle')
+    return engraved
+  }, [])
 
   const importFile = useCallback(
     async (file: File) => {
@@ -369,15 +433,26 @@ export function useScoreLibrary() {
   }, [videoJob])
 
   /**
-   * Import from a link: a video, a PDF, or the primitives the video reader writes.
+   * Import from a link: a video, a PDF, the primitives the video reader
+   * writes, or a chord site's song page.
    *
    * A video goes to the local extraction service, since recognising notation in
-   * one needs a video decoder and OpenCV. The other two are read here.
+   * one needs a video decoder and OpenCV. The others are read here.
    */
   const importUrl = useCallback(
     async (url: string) => {
       setStatus('reading')
       setError(null)
+      if (classifyUrl(url) === 'chords') {
+        setProgress(null)
+        try {
+          const page = await importChordPage(url)
+          return await adoptChordPage(page, fileNameFor(new URL(url.trim())))
+        } catch (cause) {
+          fail(cause, 'That song page could not be read.')
+          return null
+        }
+      }
       if (classifyUrl(url) === 'video') {
         setProgress(null)
         try {
@@ -434,17 +509,41 @@ export function useScoreLibrary() {
         setProgress(null)
       }
     },
-    [adopt, fail, follow],
+    [adopt, adoptChordPage, fail, follow],
   )
 
-  /** Persist a changed score against its library entry. */
+  /**
+   * Persist a changed score against its library entry.
+   *
+   * Where the tab came from and which reading it is are carried through: they
+   * are properties of the import, not of the score, so recomputing the entry
+   * from the score alone would relabel a video or a chord-site song as a PDF
+   * the first time its tempo was nudged.
+   */
   const persist = useCallback((current: LibraryEntry | null, next: ParsedScore) => {
     if (!current) return
-    void updateTab(entryFor(current.id, next, current.fileName, current.addedAt), next).catch(
-      () => {
-        // A failed write only costs the change on the next reload.
-      },
-    )
+    const entryNext = {
+      ...entryFor(
+        current.id,
+        next,
+        current.fileName,
+        current.addedAt,
+        current.source,
+        current.version,
+      ),
+      // A chord-site row is titled and sized from its sheet, not its score.
+      ...(current.source === 'chords'
+        ? {
+            title: current.title,
+            lyricLines: current.lyricLines,
+            chordCount: current.chordCount,
+            pageCount: current.pageCount,
+          }
+        : {}),
+    }
+    void updateTab(entryNext, next).catch(() => {
+      // A failed write only costs the change on the next reload.
+    })
   }, [])
 
   const setBpm = useCallback(
@@ -493,6 +592,38 @@ export function useScoreLibrary() {
     async (beatsPerBar: number) => {
       const current = entry
       if (!current) return
+
+      // A song from a chord site is re-cut from the plain-text staves it was
+      // read from, since bar length changes how a text staff divides up.
+      if (current.source === 'chords') {
+        let blocks = blocksRef.current
+        if (!blocks) {
+          const stored = await readTab(current.id).catch(() => null)
+          blocks = stored?.blocks ?? null
+          blocksRef.current = blocks
+        }
+        if (!blocks || blocks.length === 0) {
+          setError('The tablature for this song is missing, so it cannot be re-read.')
+          setStatus('error')
+          return
+        }
+        setScore((live) => {
+          const next = scoreFromAscii(blocks, {
+            title: live?.title ?? null,
+            artist: live?.artist ?? null,
+            tuningNote: live?.tuningNote ?? null,
+            bpm: live?.bpm,
+            beatsPerBar,
+          })
+          if (!next) return live
+          const merged = live ? { ...next, tuningShift: live.tuningShift } : next
+          persist(current, merged)
+          return merged
+        })
+        setStatus('idle')
+        return
+      }
+
       let pages = pagesRef.current
       if (!pages) {
         setStatus('reading')
@@ -555,6 +686,7 @@ export function useScoreLibrary() {
       if (entry?.id === id) {
         setEntry((current) => (current ? { ...current, title: name } : current))
         setScore((current) => (current ? { ...current, title: name } : current))
+        setSheet((current) => (current ? { ...current, title: name } : current))
       }
     },
     [entry],
@@ -572,8 +704,10 @@ export function useScoreLibrary() {
       }
       if (entry?.id === id) {
         pagesRef.current = null
+        blocksRef.current = null
         setEntry(null)
         setScore(null)
+        setSheet(null)
         rememberLastOpen(null)
       }
     },
@@ -583,8 +717,10 @@ export function useScoreLibrary() {
   /** Put the open tab away without deleting it. */
   const close = useCallback(() => {
     pagesRef.current = null
+    blocksRef.current = null
     setEntry(null)
     setScore(null)
+    setSheet(null)
     rememberLastOpen(null)
   }, [])
 
@@ -606,6 +742,7 @@ export function useScoreLibrary() {
     entries,
     entry,
     score,
+    sheet,
     status,
     error,
     progress,
