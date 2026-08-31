@@ -84,3 +84,91 @@ describe('what a click on the staff does', () => {
     expect(onEditNote).toHaveBeenNthCalledWith(2, 2, expect.anything())
   })
 })
+
+/**
+ * Rhythm is recovered from spacing and snapped to sixteenths, so a figure that
+ * was engraved as one tight group — `4p2`, `2h4p2` — comes back as notes a
+ * sixteenth or more apart. Drawn on those beats they stand well clear of each
+ * other with the mark adrift between them, which is not how tab prints a slur.
+ */
+describe('how a legato figure is set', () => {
+  /** Where a glyph is centred, read off the hit target that covers it. */
+  function centre(title: string): number {
+    const rect = screen.getByText(title).parentElement!
+    return Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) / 2
+  }
+
+  function drawScore(notes: ScoreNote[]) {
+    render(
+      <ScoreSheet
+        score={{ ...SCORE, notes }}
+        beat={null}
+        activeNotes={[]}
+        playingMeasure={null}
+        onPlayFrom={vi.fn()}
+        onEditNote={vi.fn()}
+      />,
+    )
+  }
+
+  /** `2h4p2`, quantised a whole beat apart in a bar with nothing else in it. */
+  const FIGURE: ScoreNote[] = [
+    { measureIndex: 0, stringIdx: 2, fret: 2, ghost: false, beat: 0, length: 1 },
+    { measureIndex: 0, stringIdx: 2, fret: 4, ghost: false, beat: 1, length: 1, art: 'hammer' },
+    { measureIndex: 0, stringIdx: 2, fret: 2, ghost: false, beat: 2, length: 1, art: 'pull' },
+  ]
+
+  it('sets the whole figure as one cluster', () => {
+    drawScore(FIGURE)
+    const first = centre('Edit bar 1, beat 1, D string')
+    const second = centre('Edit bar 1, beat 2, D string')
+    const third = centre('Edit bar 1, beat 3, D string')
+
+    // Each number just clear of the last, with room for the mark between them.
+    expect(second - first).toBe(23)
+    expect(third - second).toBe(23)
+  })
+
+  it('keeps the mark between the two numbers it joins', () => {
+    drawScore(FIGURE)
+    const first = centre('Edit bar 1, beat 1, D string')
+    const mark = centre('Edit the mark on bar 1, beat 2, D string')
+    const second = centre('Edit bar 1, beat 2, D string')
+
+    expect(mark).toBeGreaterThan(first)
+    expect(mark).toBeLessThan(second)
+  })
+
+  it('leaves notes that are not slurred together on their own beats', () => {
+    drawScore(FIGURE.map((n) => ({ ...n, art: undefined })))
+    const first = centre('Edit bar 1, beat 1, D string')
+    const second = centre('Edit bar 1, beat 2, D string')
+
+    expect(second - first).toBeGreaterThan(23)
+  })
+
+  /** A note struck with others belongs in their column, slur or no slur. */
+  it('leaves a chord voice in its column', () => {
+    const chord: ScoreNote[] = [
+      ...FIGURE.slice(0, 2),
+      { measureIndex: 0, stringIdx: 1, fret: 5, ghost: false, beat: 1, length: 1 },
+    ]
+    drawScore(chord)
+
+    expect(centre('Edit bar 1, beat 2, D string')).toBe(
+      centre('Edit bar 1, beat 2, A string'),
+    )
+  })
+
+  /** A slur out of a note two beats back is not one gesture to be clustered. */
+  it('leaves a note far from what it is slurred out of where its beat puts it', () => {
+    const far: ScoreNote[] = [
+      { measureIndex: 0, stringIdx: 2, fret: 2, ghost: false, beat: 0, length: 1 },
+      { measureIndex: 0, stringIdx: 2, fret: 4, ghost: false, beat: 3, length: 1, art: 'hammer' },
+    ]
+    drawScore(far)
+
+    const gap = centre('Edit bar 1, beat 4, D string') - centre('Edit bar 1, beat 1, D string')
+    expect(gap).toBeGreaterThan(23)
+  })
+})

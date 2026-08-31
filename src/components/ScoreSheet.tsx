@@ -39,6 +39,22 @@ function noteLabel(note: ScoreNote): string {
   return note.ghost ? `(${note.fret})` : String(note.fret)
 }
 
+/** Width of the box a run of characters needs, matching the mono fret font. */
+function boxFor(label: string): number {
+  return 7 + label.length * 7
+}
+
+/** Width of a legato symbol's own box, wedged between the numbers it joins. */
+const LEGATO_W = 9
+
+/**
+ * Beats apart, beyond which two notes are not one gesture.
+ *
+ * A slur may lead out of a note much earlier on the string, and drawing that
+ * pair as a cluster would put the second note nowhere near the beat it lands on.
+ */
+const MAX_TIGHT_BEATS = 1
+
 interface RowProps {
   score: ParsedScore
   /** Bar indices drawn on this row. */
@@ -90,6 +106,41 @@ const ScoreRow = memo(function ScoreRow({
       y: rowY(note.stringIdx),
     }))
   })
+  /**
+   * Draw each legato figure as the one cluster tab prints it as.
+   *
+   * Rhythm is recovered from how far apart notes were engraved and snapped to
+   * sixteenths, so `4p2` — set as a single tight group, because it is played as
+   * one gesture — comes back as two notes a sixteenth or more apart. Placed
+   * strictly on those beats they are drawn that far apart, with the mark adrift
+   * between them, which is not how any tab prints a pull-off.
+   *
+   * So a note a slur leads into is set against the note it comes from. Never
+   * further right than its beat would put it, never across anything else
+   * engraved between the two, and never when it is one voice of a chord — a
+   * column of notes struck together has to keep its column.
+   */
+  const byIndex = new Map(placed.map((p) => [p.index, p]))
+  const sharing = new Map<number, number>()
+  for (const p of placed) sharing.set(p.note.beat, (sharing.get(p.note.beat) ?? 0) + 1)
+  for (const target of [...placed].sort((a, b) => a.note.beat - b.note.beat)) {
+    const span = legatoByTarget.get(target.index)
+    const source = span && span.source !== null ? byIndex.get(span.source) : undefined
+    if (!source) continue
+    if (target.note.beat - source.note.beat > MAX_TIGHT_BEATS) continue
+    if ((sharing.get(target.note.beat) ?? 0) > 1) continue
+    const between = placed.some(
+      (o) => o.note.beat > source.note.beat && o.note.beat < target.note.beat,
+    )
+    if (between) continue
+    const tight =
+      source.x +
+      boxFor(noteLabel(source.note)) / 2 +
+      LEGATO_W +
+      boxFor(noteLabel(target.note)) / 2
+    if (tight < target.x) target.x = tight
+  }
+
   const xByIndex = new Map(placed.map((p) => [p.index, p.x]))
 
   /** Everything drawn on the staff, flattened so masks and glyphs can be layered. */
@@ -108,8 +159,6 @@ const ScoreRow = memo(function ScoreRow({
     /** Width of the highlight drawn behind this glyph while it sounds. */
     glowW?: number
   }
-  /** Width of the box a run of characters needs, matching the mono fret font. */
-  const boxFor = (label: string) => 7 + label.length * 7
   const glyphs: Glyph[] = []
   for (const { note, index, x, y } of placed) {
     const span = legatoByTarget.get(index)
@@ -124,7 +173,7 @@ const ScoreRow = memo(function ScoreRow({
         label: span.symbol,
         x: sourceX === undefined ? x - 11 : (sourceX + x) / 2,
         y,
-        boxW: 9,
+        boxW: LEGATO_W,
         anchor: 'middle',
         ghost: false,
       })
