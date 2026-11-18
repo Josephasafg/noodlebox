@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { libraryStore } from './scripts/libraryStore'
 
 export default defineConfig({
   base: '/noodlebox/',
-  plugins: [react()],
+  plugins: [react(), libraryStore()],
   optimizeDeps: {
     include: ['smplr'],
   },

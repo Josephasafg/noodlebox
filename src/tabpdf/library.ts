@@ -1,4 +1,5 @@
 import { sheetStats, type AsciiSource, type ChordSheet } from '../chords/types'
+import { deleteOnDisk, listOnDisk, readOnDisk, writeOnDisk } from './diskLibrary'
 import type { ParsedScore, TabPagePrimitives } from './types'
 
 /**
@@ -12,7 +13,12 @@ import type { ParsedScore, TabPagePrimitives } from './types'
  *
  * Metadata lives in its own store so listing the library never has to load
  * anybody's notes.
+ *
+ * That is the published site. Under the dev server the library is a folder on
+ * disk instead (`diskLibrary.ts`), because browser storage belongs to one port
+ * and the library would vanish whenever the app was served from another.
  */
+const ON_DISK = import.meta.env.DEV
 
 const DB_NAME = 'noodlebox-tabs'
 const DB_VERSION = 1
@@ -133,9 +139,9 @@ async function withStores<T>(
 
 /** Every stored tab, newest first. */
 export async function listTabs(): Promise<LibraryEntry[]> {
-  const entries = await withStores('readonly', (meta) =>
-    request(meta.getAll() as IDBRequest<LibraryEntry[]>),
-  )
+  const entries = ON_DISK
+    ? await listOnDisk()
+    : await withStores('readonly', (meta) => request(meta.getAll() as IDBRequest<LibraryEntry[]>))
   // Rows stored before a tab recorded where it came from: everything importable
   // then was a picked PDF, and nothing had a second version.
   return entries
@@ -144,6 +150,7 @@ export async function listTabs(): Promise<LibraryEntry[]> {
 }
 
 export async function readTab(id: string): Promise<StoredData | null> {
+  if (ON_DISK) return readOnDisk(id)
   const stored = await withStores('readonly', (_meta, data) =>
     request(data.get(id) as IDBRequest<StoredData | undefined>),
   )
@@ -179,15 +186,20 @@ export function entryFor(
   }
 }
 
+async function put(entry: LibraryEntry, stored: StoredData): Promise<void> {
+  if (ON_DISK) return writeOnDisk(entry, stored)
+  await withStores('readwrite', (meta, data) => {
+    meta.put(entry)
+    data.put(stored)
+  })
+}
+
 export async function saveTab(
   entry: LibraryEntry,
   score: ParsedScore,
   source: StoredSource,
 ): Promise<void> {
-  await withStores('readwrite', (meta, data) => {
-    meta.put(entry)
-    data.put({ id: entry.id, score, ...source } satisfies StoredData)
-  })
+  await put(entry, { id: entry.id, score, ...source })
 }
 
 /** What a song from a chord site will be called, mirroring `titleFor`. */
@@ -234,25 +246,34 @@ export async function saveSheet(
   score: ParsedScore | null,
   blocks: AsciiSource[],
 ): Promise<void> {
-  await withStores('readwrite', (meta, data) => {
-    meta.put(entry)
-    data.put({
-      id: entry.id,
-      sheet,
-      ...(score ? { score } : {}),
-      ...(blocks.length > 0 ? { blocks } : {}),
-    } satisfies StoredData)
+  await put(entry, {
+    id: entry.id,
+    sheet,
+    ...(score ? { score } : {}),
+    ...(blocks.length > 0 ? { blocks } : {}),
   })
 }
 
 /** Replace a stored score in place, keeping its list entry current. */
 export async function updateTab(entry: LibraryEntry, score: ParsedScore): Promise<void> {
+  if (ON_DISK) {
+    const existing = await readOnDisk(entry.id)
+    if (existing) await writeOnDisk(entry, { ...existing, score })
+    return
+  }
   await withStores('readwrite', async (meta, data) => {
     const existing = await request(data.get(entry.id) as IDBRequest<StoredData | undefined>)
     if (!existing) return
     meta.put(entry)
     data.put({ ...existing, score })
   })
+}
+
+function renamed(stored: StoredData, title: string): StoredData {
+  const next: StoredData = { ...stored }
+  if (next.score) next.score = { ...next.score, title }
+  if (next.sheet) next.sheet = { ...next.sheet, title }
+  return next
 }
 
 /**
@@ -263,6 +284,12 @@ export async function updateTab(entry: LibraryEntry, score: ParsedScore): Promis
  * kept only on the entry would be undone by the next tempo change.
  */
 export async function renameTab(id: string, title: string): Promise<void> {
+  if (ON_DISK) {
+    const [entries, stored] = await Promise.all([listOnDisk(), readOnDisk(id)])
+    const entry = entries.find((e) => e.id === id)
+    if (entry && stored) await writeOnDisk({ ...entry, title }, renamed(stored, title))
+    return
+  }
   await withStores('readwrite', async (meta, data) => {
     // Both reads are issued before either is awaited, so the transaction is
     // still open when they land.
@@ -272,14 +299,12 @@ export async function renameTab(id: string, title: string): Promise<void> {
     ])
     if (!entry || !stored) return
     meta.put({ ...entry, title })
-    const renamed: StoredData = { ...stored }
-    if (renamed.score) renamed.score = { ...renamed.score, title }
-    if (renamed.sheet) renamed.sheet = { ...renamed.sheet, title }
-    data.put(renamed)
+    data.put(renamed(stored, title))
   })
 }
 
 export async function deleteTab(id: string): Promise<void> {
+  if (ON_DISK) return deleteOnDisk(id)
   await withStores('readwrite', (meta, data) => {
     meta.delete(id)
     data.delete(id)
